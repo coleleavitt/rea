@@ -1,3 +1,4 @@
+import { electronStaticFindingCount } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
@@ -611,12 +612,7 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.role_paths.length +
   analysis.source_map_urls.length +
   analysis.bundler_registrations.length +
-  analysis.electron.browser_windows.length +
-  analysis.electron.context_bridge_apis.length +
-  analysis.electron.ipc.length +
-  analysis.electron.sender_validations.length +
-  analysis.electron.utility_processes.length +
-  analysis.electron.native_addon_bindings.length;
+  electronStaticFindingCount(analysis.electron);
 
 const rangeForOffsets = (
   text: string,

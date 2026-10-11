@@ -139,6 +139,7 @@ const ipc = z
   });
 const windowShape = {
   ...electronFindingContext,
+  api: z.enum(["BrowserWindow", "BrowserView", "WebContentsView"]),
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
@@ -254,6 +255,33 @@ const electron = z.strictObject({
       namespace_access: z.boolean().optional(),
       dynamic_member_access: z.boolean().optional(),
     }),
+  ),
+  webview_attachments: z.array(
+    z
+      .strictObject({
+        ...findingContext,
+        handler_kind: z.enum([
+          "inline-function",
+          "identifier",
+          "member-expression",
+          "dynamic-expression",
+          "missing",
+        ]),
+        handler_location: range.nullable(),
+        writes: z.array(
+          z.strictObject({
+            target: z.enum(["web-preferences", "params"]),
+            name: z.string(),
+            operation: z.enum(["assign", "delete"]),
+            value: staticValue.nullable(),
+            location: range,
+          }),
+        ),
+        preload_path: z.string().nullable(),
+        preload_resolution_context: pathContext.nullable(),
+        unknown_writes: count,
+      })
+      .transform(withRuntime),
   ),
 });
 const referenceShape = {

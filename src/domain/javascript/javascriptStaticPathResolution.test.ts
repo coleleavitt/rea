@@ -246,6 +246,7 @@ const assertPathProjection = (
   );
   expect(analysis.electron.browser_windows).toEqual([
     {
+      api: "BrowserWindow",
       options_status: "object-literal",
       web_preferences_status: "object-literal",
       web_preferences: [

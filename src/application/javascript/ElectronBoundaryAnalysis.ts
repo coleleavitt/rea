@@ -88,6 +88,14 @@ export const summarizeElectronBoundaries = (
   const windows = javascript.flatMap(
     ({ electron }) => electron.browser_windows,
   );
+  const identities = javascript.flatMap(({ electron }) =>
+    [
+      ...electron.browser_windows,
+      ...electron.context_bridge_apis,
+      ...electron.ipc,
+      ...electron.utility_processes,
+    ].map(({ electron_identity: identity }) => identity),
+  );
   const bridges = javascript.flatMap(
     ({ electron }) => electron.context_bridge_apis,
   );
@@ -114,14 +122,28 @@ export const summarizeElectronBoundaries = (
     ),
   );
   return {
-    browser_windows: windows.length,
+    browser_windows: windows.filter(({ api }) => api === "BrowserWindow")
+      .length,
+    web_contents_views: windows.filter(({ api }) => api !== "BrowserWindow")
+      .length,
+    webview_attach_handlers: javascript.reduce(
+      (count, { electron }) => count + electron.webview_attachments.length,
+      0,
+    ),
     explicit_web_preferences: windows.reduce(
       (count, window) => count + window.web_preferences.length,
       0,
     ),
-    preload_entrypoints: windows.filter(
-      ({ preload_path: path }) => path !== null,
-    ).length,
+    preload_entrypoints:
+      windows.filter(({ preload_path: path }) => path !== null).length +
+      javascript.reduce(
+        (count, { electron }) =>
+          count +
+          electron.webview_attachments.filter(
+            ({ preload_path: path }) => path !== null,
+          ).length,
+        0,
+      ),
     context_bridge_apis: bridges.length,
     exposed_api_members: bridges.reduce(
       (count, bridge) => count + bridge.members.length,
@@ -172,6 +194,9 @@ export const summarizeElectronBoundaries = (
         kind: "native-addon",
         moduleKind: finding.module_kind,
       }),
+    ).length,
+    wrapper_inferred_api_findings: identities.filter(
+      ({ basis }) => basis === "wrapper-parameter",
     ).length,
   };
 };

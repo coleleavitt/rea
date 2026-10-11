@@ -289,8 +289,17 @@ Selected bounded text is then parsed as inert data to recover:
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
-- explicit BrowserWindow options and `webPreferences`, including statically
-  resolvable preload entrypoints;
+- explicit `BrowserWindow`, `BrowserView`, and `WebContentsView` options and
+  `webPreferences`, including statically resolvable preload entrypoints. The
+  finding's `api` names the constructor; views become `web-contents-view`
+  graph nodes. Minified booleans such as `!0` and `!1` are read as `true` and
+  `false`;
+- `will-attach-webview` listeners (`on`, `once`, `addListener`,
+  `prependListener`) with an inline handler: writes and deletions through its
+  `webPreferences` and `params` parameters, in source order, and the last
+  statically resolvable preload path. The listener is recognized by its event
+  name; the receiver is not proven to be a webContents, and branches are not
+  evaluated;
 - `contextBridge.exposeInMainWorld` and `exposeInIsolatedWorld` API keys and
   bounded member paths of a literal API object or of an identifier bound to one
   stable object-literal initializer (`api_status: object-binding`). Member

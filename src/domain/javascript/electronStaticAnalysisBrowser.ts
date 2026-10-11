@@ -43,11 +43,19 @@ const inspectBrowserWindow = (
   context: JavaScriptFindingContext,
 ): void => {
   const callee = electronCallee(node.callee, context);
-  if (callee?.path.length !== 1 || callee.path[0] !== "BrowserWindow") return;
+  const api = callee?.path.length === 1 ? callee.path[0] : undefined;
+  if (
+    callee === undefined ||
+    (api !== "BrowserWindow" &&
+      api !== "BrowserView" &&
+      api !== "WebContentsView")
+  )
+    return;
   const options = argumentNode(node.arguments[0]);
   const collected = collectWindowOptions(context.source, options);
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    api,
     options_status:
       options === undefined
         ? "missing"
@@ -63,7 +71,7 @@ const inspectBrowserWindow = (
   };
   addLocatedFinding(context, {
     collection: context.accumulator.browserWindows,
-    key: "electron-window\0BrowserWindow",
+    key: `electron-window\0${api}`,
     node,
     value: finding,
   });

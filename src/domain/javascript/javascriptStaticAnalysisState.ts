@@ -17,6 +17,7 @@ import type {
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
   ElectronUtilityProcessFinding,
+  ElectronWebviewAttachFinding,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
 
@@ -49,6 +50,7 @@ export interface JavaScriptAnalysisAccumulator {
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
+  readonly webviewAttachments: LocatedJavaScriptFinding<ElectronWebviewAttachFinding>[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** `preload` attributes of audio and video elements, which are not scripts. */
   readonly mediaElementPreloads: WeakSet<t.Node>;
@@ -130,6 +132,7 @@ export const createJavaScriptAnalysisAccumulator = (
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],
+  webviewAttachments: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   mediaElementPreloads: new WeakSet(),
   seen: new Set(),

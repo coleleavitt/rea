@@ -33,8 +33,9 @@ export type ElectronBrowserWindowPreload =
       readonly preload_resolution_context: null;
     };
 
-/** Statically visible BrowserWindow construction and preference surface. */
+/** Statically visible window or view construction and preference surface. */
 export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
+  readonly api: "BrowserWindow" | "BrowserView" | "WebContentsView";
   readonly options_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences: readonly ElectronWebPreference[];
@@ -218,6 +219,40 @@ export type ElectronApiIdentity =
       readonly unresolved_arguments: number;
     };
 
+/** One write to a `will-attach-webview` handler's preferences or params. */
+export interface ElectronWebviewAttachWrite {
+  readonly target: "web-preferences" | "params";
+  readonly name: string;
+  readonly operation: "assign" | "delete";
+  /** Assigned value; null for a deletion. */
+  readonly value: ElectronStaticValue | null;
+  readonly location: JavaScriptSourceRange;
+}
+
+/**
+ * One `will-attach-webview` listener. The event name is Electron-specific; the
+ * receiver is not proven to be a webContents.
+ */
+export interface ElectronWebviewAttachFinding {
+  readonly handler_kind:
+    | "inline-function"
+    | "identifier"
+    | "member-expression"
+    | "dynamic-expression"
+    | "missing";
+  readonly handler_location: JavaScriptSourceRange | null;
+  readonly writes: readonly ElectronWebviewAttachWrite[];
+  /** Static preload path written to the webview's preferences, if exact. */
+  readonly preload_path: string | null;
+  readonly preload_resolution_context: JavaScriptStaticPathContext | null;
+  /** Writes with computed keys, or handler bodies that were not examined. */
+  readonly unknown_writes: number;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
 /** Resolved Electron identity of one call or construction callee root. */
 export interface ElectronCalleeBinding {
   /** Electron export path of the root after `consumed_members` callee members. */
@@ -234,4 +269,17 @@ export interface ElectronStaticFindings {
   readonly sender_validations: readonly ElectronSenderValidationFinding[];
   readonly utility_processes: readonly ElectronUtilityProcessFinding[];
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
+  readonly webview_attachments: readonly ElectronWebviewAttachFinding[];
 }
+
+/** Number of Electron findings, counted once for limits and limitations. */
+export const electronStaticFindingCount = (
+  electron: ElectronStaticFindings,
+): number =>
+  electron.browser_windows.length +
+  electron.context_bridge_apis.length +
+  electron.ipc.length +
+  electron.sender_validations.length +
+  electron.utility_processes.length +
+  electron.native_addon_bindings.length +
+  electron.webview_attachments.length;
