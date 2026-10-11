@@ -180,6 +180,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
           ]
         : []),
       "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
+      "Folded String.fromCharCode and Array.prototype.join calls assume the unmodified built-ins.",
       "Return sites include only direct callable returns; nested callable returns remain separate.",
       "Local call, argument, return, and closure relations are static candidates and do not prove runtime invocation.",
       "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
