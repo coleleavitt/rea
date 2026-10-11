@@ -26,6 +26,9 @@ import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
+
+const DERIVED_VALUE_LIMITATION =
+  "The value was folded from a constant expression without executing it; the expression property retains its source.";
 type StaticStorage = JavaScriptStaticAnalysis["storage"][number];
 type StaticRolePath = JavaScriptStaticAnalysis["role_paths"][number];
 type StaticSourceMap = JavaScriptStaticAnalysis["source_map_urls"][number];
@@ -184,6 +187,7 @@ const addEndpoint = (
         properties: {
           endpoint_kind: input.value.kind,
           value: input.value.value,
+          expression: input.value.expression,
           mechanism: input.value.mechanism,
         },
         evidence: astObservationEvidence({
@@ -192,6 +196,8 @@ const addEndpoint = (
           range: input.value.location,
           operation: "discover-static-endpoint",
           coverage: input.coverage,
+          limitations:
+            input.value.expression === null ? [] : [DERIVED_VALUE_LIMITATION],
         }),
       },
     ],

@@ -20,6 +20,7 @@ import {
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { staticConstantString } from "./javascriptStaticConstants.js";
 import type {
   JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   JavaScriptEndpointInput as EndpointInput,
@@ -183,20 +184,30 @@ const inspectEndpointCall = (
       node,
       kind: "route",
       value: first,
+      expression: null,
       mechanism: `call:${name}`,
     });
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
+  const read = (argument: t.Node | null | undefined): string | undefined =>
+    staticConstantString(context.constants(argument));
   const endpoint = endpointArgumentHelper(
     name,
     node.arguments,
     node.callee,
+    read,
     receiverFact,
   );
-  if (endpoint !== undefined)
+  const constant = context.constants(endpoint);
+  const value = staticConstantString(constant);
+  if (endpoint !== undefined && value !== undefined)
     addEndpoint(context, {
       node,
       kind: "network",
-      value: endpoint,
+      value,
+      expression:
+        constant.status === "derived"
+          ? sourceSlice(context.source, endpoint)
+          : null,
       mechanism: `call:${name}`,
     });
 };
@@ -205,7 +216,7 @@ const inspectEndpointCall = (
 export const inspectRpcNode = (node: t.Node, context: FindingContext): void => {
   const rpc = context.rpcScan.inspect(node);
   if (rpc !== undefined)
-    addEndpoint(context, { node, kind: "network", ...rpc });
+    addEndpoint(context, { node, kind: "network", expression: null, ...rpc });
 };
 
 export const inspectRouteProperty = (
@@ -218,6 +229,7 @@ export const inspectRouteProperty = (
       node,
       kind: "route",
       value: node.value.value,
+      expression: null,
       mechanism: `property:${key}`,
     });
 };
@@ -310,6 +322,7 @@ const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
     value: {
       kind: input.kind,
       value: sanitizeEndpointCandidate(input.value),
+      expression: input.expression,
       mechanism: input.mechanism,
       module_key: null,
       location: range(input.node),

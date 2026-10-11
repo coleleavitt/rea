@@ -45,7 +45,7 @@ const inspectBrowserWindow = (
   const path = electronCalleePath(node.callee, context);
   if (path?.length !== 1 || path[0] !== "BrowserWindow") return;
   const options = argumentNode(node.arguments[0]);
-  const collected = collectWindowOptions(context.source, options);
+  const collected = collectWindowOptions(context, options);
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
     options_status:
@@ -69,7 +69,7 @@ const inspectBrowserWindow = (
 };
 
 const collectWindowOptions = (
-  source: string,
+  context: JavaScriptFindingContext,
   options: t.Node | undefined,
 ): {
   readonly status: ElectronBrowserWindowFinding["web_preferences_status"];
@@ -88,11 +88,11 @@ const collectWindowOptions = (
       preload: { preload_path: null, preload_resolution_context: null },
       unknown: lookup.status === "missing" ? 0 : 1,
     };
-  return collectWebPreferences(source, lookup.property.value);
+  return collectWebPreferences(context, lookup.property.value);
 };
 
 const collectWebPreferences = (
-  source: string,
+  context: JavaScriptFindingContext,
   object: t.ObjectExpression,
 ): {
   readonly status: "object-literal";
@@ -121,7 +121,7 @@ const collectWebPreferences = (
       unknown += 1;
       preferences.push({
         name: `[spread@${String(property.start ?? -1)}]`,
-        value: electronStaticValue(source, property.argument),
+        value: electronStaticValue(context, property.argument),
       });
       continue;
     }
@@ -130,7 +130,7 @@ const collectWebPreferences = (
       unknown += 1;
       preferences.push({
         name: `[dynamic@${String(property.start ?? -1)}]`,
-        value: electronStaticValue(source, property),
+        value: electronStaticValue(context, property),
       });
       continue;
     }
@@ -138,14 +138,14 @@ const collectWebPreferences = (
       unknown += 1;
       preferences.push({
         name,
-        value: electronStaticValue(source, property),
+        value: electronStaticValue(context, property),
       });
       continue;
     }
     const path = name === "preload" ? staticPath(property.value) : undefined;
     const value: ElectronStaticValue =
       path === undefined
-        ? electronStaticValue(source, property.value)
+        ? electronStaticValue(context, property.value)
         : { status: "literal", value: path, expression: null };
     if (value.status === "dynamic") unknown += 1;
     preferences.push({ name, value });
@@ -173,10 +173,10 @@ const inspectContextBridge = (
   if (!main && !isolated) return;
   const keyNode = argumentNode(node.arguments[isolated ? 1 : 0]);
   const apiNode = argumentNode(node.arguments[isolated ? 2 : 1]);
-  const key = electronStaticValue(context.source, keyNode);
+  const key = electronStaticValue(context, keyNode);
   const api = collectContextBridgeMembers(apiNode);
   const worldId = isolated
-    ? electronStaticValue(context.source, argumentNode(node.arguments[0]))
+    ? electronStaticValue(context, argumentNode(node.arguments[0]))
     : null;
   const unknown =
     (key.status === "dynamic" ? 1 : 0) +
@@ -186,9 +186,11 @@ const inspectContextBridge = (
   const apiKey: ElectronContextBridgeApiKey =
     key.status === "dynamic"
       ? { api_key: null, api_key_expression: key.expression }
-      : typeof key.value === "string"
-        ? { api_key: key.value, api_key_expression: null }
-        : { api_key: null, api_key_expression: null };
+      : typeof key.value !== "string"
+        ? { api_key: null, api_key_expression: null }
+        : key.status === "derived"
+          ? { api_key: key.value, api_key_expression: key.expression }
+          : { api_key: key.value, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
     ...apiKey,
     world: isolated ? "isolated" : "main",

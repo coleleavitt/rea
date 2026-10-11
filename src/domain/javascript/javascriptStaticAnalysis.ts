@@ -40,8 +40,10 @@ import {
   classifyParsedJavaScriptElectronBindingsSteps,
   classifyParsedJavaScriptRpcClientRootsSteps,
   classifyParsedJavaScriptOpenReceivers,
+  createParsedJavaScriptValueEvaluatorSteps,
   type JavaScriptOpenReceiverFact,
 } from "./javascriptSemanticAnalysis.js";
+import { createJavaScriptStaticConstantReader } from "./javascriptStaticConstants.js";
 import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -83,15 +85,28 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   const electronBindings =
     yield* classifyParsedJavaScriptElectronBindingsSteps(file);
   const clientRoots = yield* classifyParsedJavaScriptRpcClientRootsSteps(file);
+  const evaluation = yield* createParsedJavaScriptValueEvaluatorSteps(file);
   yield* traverseStaticSourceSteps(file, {
     source,
+    constants: createJavaScriptStaticConstantReader(
+      evaluation.status === "available" ? evaluation.evaluate : undefined,
+    ),
     accumulator,
     ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
     electronBindings,
     rpcScan: createJavaScriptRpcScan(source, clientRoots),
   });
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator);
+  return finalizeStaticAnalysis(
+    source,
+    file,
+    accumulator,
+    evaluation.status === "available"
+      ? []
+      : [
+          `Constant folding was unavailable (${evaluation.reason}); only literal syntax supplied static values.`,
+        ],
+  );
 }
 
 function* traverseStaticSourceSteps(
@@ -111,9 +126,11 @@ const finalizeStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
+  evaluationLimitations: readonly string[],
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
+    ...evaluationLimitations,
     ...(parserErrors === 0
       ? []
       : [

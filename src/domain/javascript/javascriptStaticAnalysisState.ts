@@ -1,5 +1,6 @@
 import type * as t from "@babel/types";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptStaticConstantReader } from "./javascriptStaticConstants.js";
 
 import type {
   JavaScriptBundlerRegistration,
@@ -60,6 +61,8 @@ export interface JavaScriptAnalysisAccumulator {
 export interface JavaScriptFindingContext {
   readonly rpcScan: JavaScriptRpcScan;
   readonly source: string;
+  /** Exact literal or derived values of finding expressions. */
+  readonly constants: JavaScriptStaticConstantReader;
   readonly accumulator: JavaScriptAnalysisAccumulator;
   readonly openReceiverFacts?: ReadonlyMap<
     number,
@@ -86,6 +89,7 @@ export interface JavaScriptEndpointInput {
   readonly node: t.Node;
   readonly kind: JavaScriptStaticEndpoint["kind"];
   readonly value: string;
+  readonly expression: string | null;
   readonly mechanism: string;
 }
 

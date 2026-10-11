@@ -37,10 +37,12 @@ export type JavaScriptStaticReference = JavaScriptStaticReferenceState &
     | { readonly specifier: null; readonly expression: string }
   );
 
-/** A route or network endpoint literal observed in syntax. */
+/** A route or network endpoint value observed in syntax. */
 export interface JavaScriptStaticEndpoint {
   readonly kind: "route" | "network";
   readonly value: string;
+  /** Source expression when the value was derived rather than spelled literally. */
+  readonly expression: string | null;
   readonly mechanism: string;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */

@@ -3,12 +3,20 @@ import type {
   JavaScriptStaticPathContext,
 } from "./javascriptStaticAnalysisTypes.js";
 
-/** One inert literal or unresolved expression observed in Electron syntax. */
+/**
+ * One inert literal, exact value derived from a constant expression, or
+ * unresolved expression observed in Electron syntax.
+ */
 export type ElectronStaticValue =
   | {
       readonly status: "literal";
       readonly value: string | number | boolean | null;
       readonly expression: null;
+    }
+  | {
+      readonly status: "derived";
+      readonly value: string | number | boolean | null;
+      readonly expression: string;
     }
   | {
       readonly status: "dynamic";
@@ -44,9 +52,13 @@ export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
   readonly location: JavaScriptSourceRange;
 };
 
-/** Literal, dynamic, or unsupported contextBridge API key syntax. */
+/**
+ * Literal, derived, dynamic, or unsupported contextBridge API key syntax. A
+ * derived key retains the expression its exact value was folded from.
+ */
 export type ElectronContextBridgeApiKey =
   | { readonly api_key: string; readonly api_key_expression: null }
+  | { readonly api_key: string; readonly api_key_expression: string }
   | { readonly api_key: null; readonly api_key_expression: string }
   | { readonly api_key: null; readonly api_key_expression: null };
 
@@ -118,14 +130,20 @@ interface ElectronIpcFindingContext {
   readonly location: JavaScriptSourceRange;
 }
 
+/**
+ * A literal, derived, or dynamic IPC channel. A channel with an expression was
+ * derived from that constant expression.
+ */
+export type ElectronIpcChannel =
+  | { readonly channel: string; readonly channel_expression: null }
+  | { readonly channel: string; readonly channel_expression: string }
+  | { readonly channel: null; readonly channel_expression: string };
+
 /** One statically visible Electron IPC send, invocation, listener, or handler. */
 export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcHandler &
   ElectronIpcFindingContext &
-  (
-    | { readonly channel: string; readonly channel_expression: null }
-    | { readonly channel: null; readonly channel_expression: string }
-  );
+  ElectronIpcChannel;
 
 /** Static check involving an IPC sender, frame, process, URL, or origin. */
 export interface ElectronSenderValidationFinding {
