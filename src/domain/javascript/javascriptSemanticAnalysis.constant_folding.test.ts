@@ -71,3 +71,30 @@ it("keeps shadowed intrinsics and globals unknown", () => {
     value: "1",
   });
 });
+
+it("folds request endpoints and configuration defaults", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    const base = "https://api." + "example.invalid";
+    const mode = process.env.MODE ?? ["pro", "duction"].join("");
+    const empty = process.env.EMPTY ?? null;
+    fetch(base + "/v1/" + String.fromCharCode(109, 101));
+    fetch(runtimeBase + "/v1");
+  `);
+  expect(
+    ir.requestOperations.map(({ endpoint, resolution }) => ({
+      endpoint,
+      resolution,
+    })),
+  ).toEqual([
+    { endpoint: "https://api.example.invalid/v1/me", resolution: "complete" },
+    { endpoint: null, resolution: "partial" },
+  ]);
+  expect(
+    ir.configurationOperations.flatMap(({ kind, value, resolution }) =>
+      kind === "default" ? [{ value, resolution }] : [],
+    ),
+  ).toEqual([
+    { value: "production", resolution: "complete" },
+    { value: null, resolution: "complete" },
+  ]);
+});
