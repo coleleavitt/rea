@@ -14,7 +14,7 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
   { laterSources: 10, heapMb: 640, methodsCount: 400, retainGraph: true },
   // Even an otherwise empty parent cannot admit this graph after reserving
   // transient decoding and the next checkpoint, independent of GC timing.
-  { laterSources: 1, heapMb: 448, methodsCount: 600, retainGraph: false },
+  { laterSources: 1, heapMb: 448, methodsCount: 1200, retainGraph: false },
 ])(
   "preserves evidence with $laterSources later checkpoints and a $heapMb MiB parent heap",
   { timeout: 90_000 },

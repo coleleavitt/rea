@@ -59,7 +59,8 @@ import {
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
 const MIB = 1024 * 1024;
-const STATIC_CHECKPOINT_RETENTION_EXPANSION = 6;
+/** Parsed static facts retain about 1.4x their JSON bytes; see javaScriptTransferRetentionBytes. */
+const STATIC_CHECKPOINT_RETENTION_EXPANSION = 2;
 const pendingCleanup = new Set<JavaScriptAnalysisWorker>();
 /** The worker runs on this executable; Bun accepts but ignores V8 heap flags. */
 const WORKER_HEAP_FLAGS_ENFORCED =
