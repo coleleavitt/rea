@@ -266,5 +266,11 @@ const literalValue = (
       ? { found: true, value }
       : { found: false };
   }
+  // Minifiers spell booleans as `!0` and `!1`; negating a numeric literal is exact.
+  if (
+    t.isUnaryExpression(node, { operator: "!" }) &&
+    t.isNumericLiteral(node.argument)
+  )
+    return { found: true, value: !node.argument.value };
   return { found: false };
 };
