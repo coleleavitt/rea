@@ -124,7 +124,7 @@ new NativeWindow();
   let electronStep = electronSteps.next();
   expect(electronStep.done).toBe(false);
   while (electronStep.done !== true) electronStep = electronSteps.next();
-  expect([...electronStep.value]).toEqual([
+  expect([...electronStep.value.callees]).toEqual([
     [
       text.lastIndexOf("NativeWindow()"),
       {
@@ -192,7 +192,7 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
   if (parsed === null) throw new Error("Expected parsed source");
 
   expect(
-    [...classifyParsedJavaScriptElectronBindings(parsed)].map(
+    [...classifyParsedJavaScriptElectronBindings(parsed).callees].map(
       ([offset, { path }]) => [offset, path],
     ),
   ).toEqual([

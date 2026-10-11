@@ -292,7 +292,12 @@ Selected bounded text is then parsed as inert data to recover:
 - explicit BrowserWindow options and `webPreferences`, including statically
   resolvable preload entrypoints;
 - `contextBridge.exposeInMainWorld` and `exposeInIsolatedWorld` API keys and
-  bounded literal member paths;
+  bounded member paths of a literal API object or of an identifier bound to one
+  stable object-literal initializer (`api_status: object-binding`). Member
+  values that are such identifiers are followed. Keys from a conditional
+  object spread whose branches are known objects are listed separately as
+  `conditional_members`. A visible member write to a bound object adds one
+  unknown member, because its added keys are not enumerated;
 - renderer and main-process IPC operations, literal or dynamic channels, exact
   handler locations, and conservative pairing status;
 - sender, frame, URL, and origin validation candidates without claiming that a

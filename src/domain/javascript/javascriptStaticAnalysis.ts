@@ -80,14 +80,13 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
-  const electronBindings =
-    yield* classifyParsedJavaScriptElectronBindingsSteps(file);
+  const electron = yield* classifyParsedJavaScriptElectronBindingsSteps(file);
   const clientRoots = yield* classifyParsedJavaScriptRpcClientRootsSteps(file);
   yield* traverseStaticSourceSteps(file, {
     source,
     accumulator,
     ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
-    electronBindings,
+    electron,
     rpcScan: createJavaScriptRpcScan(source, clientRoots),
   });
   addSourceMapDirectives(source, file.comments ?? [], accumulator);

@@ -57,6 +57,20 @@ export interface JavaScriptAnalysisAccumulator {
   unknownFindings: number;
 }
 
+/** Object literal bound to an identifier in a contextBridge API argument. */
+export interface ElectronApiObject {
+  readonly object: t.ObjectExpression;
+  /** A visible member write or mutator call targets the bound object. */
+  readonly memberWrites: boolean;
+}
+
+/** Electron facts recovered from lexical bindings before the finding scan. */
+export interface JavaScriptElectronSemanticFacts {
+  readonly callees: ReadonlyMap<number, ElectronCalleeBinding>;
+  /** Bound API objects by identifier offset. */
+  readonly apiObjects: ReadonlyMap<number, ElectronApiObject>;
+}
+
 /** Shared source and accumulator for helper inspections. */
 export interface JavaScriptFindingContext {
   readonly rpcScan: JavaScriptRpcScan;
@@ -71,8 +85,8 @@ export interface JavaScriptFindingContext {
     | "local-indexed-db"
     | "local-cache-storage"
   >;
-  /** Classified Electron callee identities by root offset. */
-  readonly electronBindings?: ReadonlyMap<number, ElectronCalleeBinding>;
+  /** Classified Electron callee identities and bound bridge API objects. */
+  readonly electron?: JavaScriptElectronSemanticFacts;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */

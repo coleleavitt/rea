@@ -190,6 +190,7 @@ const addContextBridge = (
           api_key_expression: value.api_key_expression,
           api_status: value.api_status,
           members: value.members,
+          conditional_members: value.conditional_members,
           unknown_members: value.unknown_members,
           electron_identity: value.electron_identity,
         },

@@ -177,7 +177,10 @@ const inspectContextBridge = (
   const keyNode = argumentNode(node.arguments[isolated ? 1 : 0]);
   const apiNode = argumentNode(node.arguments[isolated ? 2 : 1]);
   const key = electronStaticValue(context.source, keyNode);
-  const api = collectContextBridgeMembers(apiNode);
+  const api = collectContextBridgeMembers(
+    apiNode,
+    context.electron?.apiObjects,
+  );
   const worldId = isolated
     ? electronStaticValue(context.source, argumentNode(node.arguments[0]))
     : null;
@@ -198,6 +201,7 @@ const inspectContextBridge = (
     world_id: worldId,
     api_status: api.status,
     members: api.members,
+    conditional_members: api.conditional_members,
     unknown_members: api.unknown,
     electron_identity: callee.identity,
     module_key: null,

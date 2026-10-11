@@ -30,6 +30,12 @@ const PRELOAD = `const { contextBridge, ipcRenderer } = require("electron");
 function expose(bridge) { bridge.exposeInMainWorld("reliability", { report: 1 }); }
 expose(contextBridge);
 ipcRenderer.sendSync("app:snapshot");
+const update = { check() {}, quitAndInstall: () => 0 };
+const desktop = { openExternal() {}, update, theme: { get: 1 }, ...(cookies == null ? {} : { chromeCookies: cookies }) };
+contextBridge.exposeInMainWorld("desktop", desktop);
+const patched = { ready: 1 };
+patched.late = 2;
+contextBridge.exposeInMainWorld("patched", patched);
 throw new Error("must not execute preload");
 `;
 
@@ -81,7 +87,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 
     expect(summary).toMatchObject({
       browser_windows: 1,
-      context_bridge_apis: 1,
+      context_bridge_apis: 3,
       ipc: { main_handlers: 2, paired_renderer_transmissions: 1 },
     });
     const snapshot = located(graph, "ipc-handler", 3);
@@ -141,6 +147,30 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       api_key: "reliability",
       members: ["report"],
       electron_identity: { function_name: "expose", parameter: "bridge" },
+    });
+    expect(
+      located(graph, "context-bridge-api", 7)?.observations[0]?.properties,
+    ).toMatchObject({
+      api_key: "desktop",
+      api_status: "object-binding",
+      members: [
+        "openExternal",
+        "theme",
+        "theme.get",
+        "update",
+        "update.check",
+        "update.quitAndInstall",
+      ],
+      conditional_members: ["chromeCookies"],
+      unknown_members: 0,
+    });
+    expect(
+      located(graph, "context-bridge-api", 10)?.observations[0]?.properties,
+    ).toMatchObject({
+      api_key: "patched",
+      api_status: "object-binding",
+      members: ["ready"],
+      unknown_members: 1,
     });
   },
 );
