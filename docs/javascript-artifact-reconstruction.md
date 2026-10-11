@@ -413,6 +413,21 @@ identity. This static check does
 not evaluate arbitrary call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
 
+An Electron API reached through one wrapper parameter is an inference recorded
+in `electron_identity` with `basis: "wrapper-parameter"`. The callee root must be
+a parameter, or a destructured parameter key, of a named function with one
+stable declaration. Every same-file direct call of that function is examined.
+An argument proves the export when it is a proven Electron expression, an
+object-literal member holding one, or one branch of `??`, `||`, `&&`, or a
+conditional. All proven arguments must agree on one export path. The record
+keeps the function, parameter, call-site count, proven argument locations, and
+the number of unresolved arguments. `call_sites_complete` is false when the
+function is also referenced other than as a callee. The syntax observation is
+unchanged, but the relationship from the containing source to the window or
+handler is an inference: `medium` confidence when every call site is known and
+resolved, otherwise `low`. Deeper wrapper chains, calls from other files, and
+writes to the parameter inside the wrapper are not examined.
+
 IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
 with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
 channel; a renderer send pairs only with one unique `ipcMain.on`/`once`

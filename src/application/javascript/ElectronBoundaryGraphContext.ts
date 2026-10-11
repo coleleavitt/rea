@@ -1,4 +1,6 @@
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import type { ElectronApiIdentity } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { sha256Text } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -60,7 +62,7 @@ export const electronObservationIdentity = (
 });
 
 /** Add a direct AST syntax relationship. */
-export const addElectronAstEdge = (
+const addElectronAstEdge = (
   context: JavaScriptArtifactGraphContext,
   input: ElectronGraphEdgeInput,
 ): void => {
@@ -107,6 +109,67 @@ export const addElectronInferenceEdge = (
     }),
   });
 };
+
+/**
+ * Observed syntax of an Electron API call or construction. An identity
+ * inferred through a wrapper parameter is stated as a limitation; relationships
+ * that depend on it use `addElectronApiEdge`.
+ */
+export const electronApiEvidence = (input: {
+  readonly file: JavaScriptArtifactFile;
+  readonly range: JavaScriptSourceRange;
+  readonly operation: string;
+  readonly coverage: JavaScriptArtifactGraphCoverage;
+  readonly identity: ElectronApiIdentity;
+  readonly limitations?: readonly string[];
+}): ApplicationGraphEvidence =>
+  astObservationEvidence({
+    sha256: input.file.sha256,
+    path: input.file.path,
+    range: input.range,
+    operation: input.operation,
+    coverage: input.coverage,
+    limitations: [
+      ...electronIdentityLimitations(input.identity),
+      ...(input.limitations ?? []),
+    ],
+  });
+
+/**
+ * Add a direct syntax relationship to an Electron API node. When the API
+ * identity rests on wrapper call sites, the relationship is an inference whose
+ * confidence reflects whether every same-file call site agreed.
+ */
+export const addElectronApiEdge = (
+  context: JavaScriptArtifactGraphContext,
+  identity: ElectronApiIdentity,
+  input: ElectronGraphEdgeInput,
+): void => {
+  if (identity.basis === "module-binding") {
+    addElectronAstEdge(context, input);
+    return;
+  }
+  addElectronInferenceEdge(context, {
+    ...input,
+    confidence:
+      identity.call_sites_complete && identity.unresolved_arguments === 0
+        ? "medium"
+        : "low",
+    limitations: [
+      ...electronIdentityLimitations(identity),
+      ...(input.limitations ?? []),
+    ],
+  });
+};
+
+const electronIdentityLimitations = (
+  identity: ElectronApiIdentity,
+): readonly string[] =>
+  identity.basis === "module-binding"
+    ? []
+    : [
+        `The Electron API identity is inferred from ${String(identity.electron_argument_locations.length)} argument(s) passed to parameter ${identity.parameter} of ${identity.function_name}; ${String(identity.unresolved_arguments)} other argument value(s) are unresolved${identity.call_sites_complete ? "" : ", and the function is also referenced outside direct calls"}.`,
+      ];
 
 /** Deterministic source-range key for artifact-local graph identities. */
 export const electronRangeKey = (range: JavaScriptSourceRange): string =>

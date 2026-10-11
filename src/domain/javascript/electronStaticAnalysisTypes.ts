@@ -38,6 +38,7 @@ export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
   readonly options_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences: readonly ElectronWebPreference[];
+  readonly electron_identity: ElectronApiIdentity;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
@@ -57,6 +58,7 @@ export type ElectronContextBridgeFinding = ElectronContextBridgeApiKey & {
   readonly api_status: "object-literal" | "dynamic" | "missing";
   readonly members: readonly string[];
   readonly unknown_members: number;
+  readonly electron_identity: ElectronApiIdentity;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
@@ -112,6 +114,7 @@ type ElectronIpcHandler =
     };
 
 interface ElectronIpcFindingContext {
+  readonly electron_identity: ElectronApiIdentity;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
@@ -147,6 +150,7 @@ export interface ElectronSenderValidationFinding {
 
 interface ElectronUtilityProcessFindingState {
   readonly service_name: string | null;
+  readonly electron_identity: ElectronApiIdentity;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
@@ -182,6 +186,38 @@ export interface ElectronNativeAddonBindingFinding {
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
+}
+
+/**
+ * How a finding's Electron API identity was established. A module binding is
+ * a proven lexical alias of the Electron module. A wrapper parameter is an
+ * inference: the callee root is a parameter of a function whose same-file call
+ * sites pass a proven Electron export, directly or as an object-literal member.
+ */
+export type ElectronApiIdentity =
+  | { readonly basis: "module-binding" }
+  | {
+      readonly basis: "wrapper-parameter";
+      readonly function_name: string;
+      readonly parameter: string;
+      readonly parameter_index: number;
+      readonly function_location: JavaScriptSourceRange;
+      /** Direct calls of the function found in the same file. */
+      readonly call_sites: number;
+      /** False when the function is also referenced other than as a callee. */
+      readonly call_sites_complete: boolean;
+      /** Argument expressions, including fallback branches, that prove the export. */
+      readonly electron_argument_locations: readonly JavaScriptSourceRange[];
+      /** Argument expressions or branches whose value is unresolved. */
+      readonly unresolved_arguments: number;
+    };
+
+/** Resolved Electron identity of one call or construction callee root. */
+export interface ElectronCalleeBinding {
+  /** Electron export path of the root after `consumed_members` callee members. */
+  readonly path: readonly string[];
+  readonly consumed_members: number;
+  readonly identity: ElectronApiIdentity;
 }
 
 /** All Electron-specific facts collected during one shared AST traversal. */

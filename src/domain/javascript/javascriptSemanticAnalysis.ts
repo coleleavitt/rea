@@ -47,6 +47,8 @@ import {
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
 import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
+import type { ElectronCalleeBinding } from "./electronStaticAnalysisTypes.js";
+import { createElectronWrapperParameters } from "./javascriptElectronWrapperParameters.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronExportPath,
@@ -362,14 +364,14 @@ const resolveGlobalAliasFact = (
  */
 export const classifyParsedJavaScriptElectronBindings = (
   file: ParsedJavaScriptSource,
-): ReadonlyMap<number, readonly string[]> =>
+): ReadonlyMap<number, ElectronCalleeBinding> =>
   completeSemanticSteps(classifyParsedJavaScriptElectronBindingsSteps(file));
 
 /** Resolve Electron aliases while yielding during lexical and AST scans. */
 export function* classifyParsedJavaScriptElectronBindingsSteps(
   file: ParsedJavaScriptSource,
-): Generator<void, ReadonlyMap<number, readonly string[]>> {
-  const facts = new Map<number, readonly string[]>();
+): Generator<void, ReadonlyMap<number, ElectronCalleeBinding>> {
+  const facts = new Map<number, ElectronCalleeBinding>();
   const state = createState(file.program);
   yield* collectDefinitionsSteps(file.program, state);
   const interop = createSemanticModuleInterop(state);
@@ -422,6 +424,7 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
     },
   );
   collectedWrites = true;
+  const wrappers = createElectronWrapperParameters(state, rootExport);
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
       if (
@@ -432,13 +435,22 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
         return;
       const { root, members } = electronMemberPath(node.callee);
       const exported = rootExport(root);
-      if (
-        exported !== undefined &&
-        !writes.covers(["electron", ...exported, ...members])
-      )
-        facts.set(root.start ?? -1, exported);
+      if (exported === undefined) {
+        wrappers.defer(root, members);
+        return;
+      }
+      if (!writes.covers(["electron", ...exported, ...members]))
+        facts.set(root.start ?? -1, {
+          path: exported,
+          consumed_members: 0,
+          identity: { basis: "module-binding" },
+        });
     },
   });
+  yield* wrappers.collectCallSitesSteps(file.program);
+  for (const { root, binding } of wrappers.resolved())
+    if (!writes.covers(["electron", ...binding.path]))
+      facts.set(root.start ?? -1, binding);
   return facts;
 }
 

@@ -7,7 +7,7 @@ import type {
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
-  electronCalleePath,
+  electronCallee,
   electronStaticValue,
   handlerKind,
 } from "./electronStaticAnalysisValues.js";
@@ -37,8 +37,9 @@ const inspectIpcCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const descriptor = ipcDescriptor(electronCalleePath(node.callee, context));
-  if (descriptor === undefined) return;
+  const callee = electronCallee(node.callee, context);
+  const descriptor = ipcDescriptor(callee?.path);
+  if (callee === undefined || descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
   const channelValue = electronStaticValue(context.source, channelNode);
   const channel =
@@ -89,6 +90,7 @@ const inspectIpcCall = (
   const finding: ElectronIpcFinding = {
     ...findingState,
     ...channelReference,
+    electron_identity: callee.identity,
     module_key: null,
     location: range(node),
   };
