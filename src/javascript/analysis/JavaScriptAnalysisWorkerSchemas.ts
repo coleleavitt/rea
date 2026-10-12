@@ -285,10 +285,11 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     endpoints: z.array(
       z.strictObject({
         ...findingContext,
-        kind: z.enum(["route", "network"]),
+        kind: z.enum(["route", "network", "data"]),
         value: z.string(),
         expression: z.string().nullable(),
         mechanism: z.string(),
+        property_path: strings.nullable(),
       }),
     ),
     storage: z.array(

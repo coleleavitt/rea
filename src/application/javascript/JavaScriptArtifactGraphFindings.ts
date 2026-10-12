@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 
-import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -23,17 +22,16 @@ import {
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import { addJavaScriptEndpoint } from "./JavaScriptArtifactGraphEndpoints.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
-type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
 
-const DERIVED_VALUE_LIMITATION =
-  "The value was folded from a constant expression without executing it; the expression property retains its source.";
 type StaticStorage = JavaScriptStaticAnalysis["storage"][number];
 type StaticRolePath = JavaScriptStaticAnalysis["role_paths"][number];
 type StaticSourceMap = JavaScriptStaticAnalysis["source_map_urls"][number];
 
-interface FindingInput<Value> {
+/** One static finding with its owning artifact and asset node. */
+export interface FindingInput<Value> {
   readonly file: JavaScriptArtifactFile;
   readonly asset: ApplicationNode;
   readonly value: Value;
@@ -60,7 +58,7 @@ export function* addJavaScriptStaticFindingsSteps(
     for (const value of javascript.references)
       addReference(context, { file, asset, value, coverage }, omissions);
     for (const value of javascript.endpoints)
-      addEndpoint(context, { file, asset, value, coverage });
+      addJavaScriptEndpoint(context, { file, asset, value, coverage });
     for (const value of javascript.storage)
       addStorage(context, { file, asset, value, coverage });
     for (const value of javascript.role_paths)
@@ -161,55 +159,6 @@ const addReference = (
       expression: input.value.expression,
       resolved_path: resolved?.path ?? null,
     },
-  });
-};
-
-const addEndpoint = (
-  context: JavaScriptArtifactGraphContext,
-  input: FindingInput<StaticEndpoint>,
-): void => {
-  const source =
-    sourceNodeFor(
-      context,
-      input.file.path,
-      input.value.module_key,
-      input.value.module_runtime,
-    ) ?? input.asset;
-  const key = compactStringIdentityKey(input.value.value);
-  const label = `${input.value.kind} endpoint`;
-  const node = context.accumulator.addNode({
-    kind: "endpoint",
-    identity: artifactLocalIdentity(input.file.sha256, input.value.kind, key),
-    observations: [
-      {
-        label:
-          input.value.value.length <= label.length ? input.value.value : label,
-        properties: {
-          endpoint_kind: input.value.kind,
-          value: input.value.value,
-          expression: input.value.expression,
-          mechanism: input.value.mechanism,
-        },
-        evidence: astObservationEvidence({
-          sha256: input.file.sha256,
-          path: input.file.path,
-          range: input.value.location,
-          operation: "discover-static-endpoint",
-          coverage: input.coverage,
-          limitations:
-            input.value.expression === null ? [] : [DERIVED_VALUE_LIMITATION],
-        }),
-      },
-    ],
-  });
-  addStaticInferenceEdge(context, {
-    source,
-    target: node,
-    file: input.file,
-    range: input.value.location,
-    coverage: input.coverage,
-    relation: input.value.kind === "route" ? "exposes" : "calls",
-    properties: { mechanism: input.value.mechanism },
   });
 };
 

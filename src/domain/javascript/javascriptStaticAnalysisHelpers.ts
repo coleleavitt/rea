@@ -431,18 +431,11 @@ const BROWSING_CONTEXT_KEYWORDS = new Set([
  * conventionally uppercase tokens.
  */
 const xhrOpenUrl = (
-  name: string,
-  methodNode: t.Node | null | undefined,
-  urlNode: t.Node | null | undefined,
+  { name, args, receiverFact }: StaticEndpointCall,
   read: StaticStringReader,
-  receiverFact?:
-    | "window"
-    | "indexed-db"
-    | "cache-storage"
-    | "local"
-    | "local-indexed-db"
-    | "local-cache-storage",
 ): t.Node | undefined => {
+  const methodNode = args[0];
+  const urlNode = args[1];
   const url = read(urlNode);
   if (url === undefined || urlNode === null || urlNode === undefined)
     return undefined;
@@ -516,32 +509,38 @@ export type StaticStringReader = (
   node: t.Node | null | undefined,
 ) => string | undefined;
 
-/** Select the exact URL argument for recognized network callees. */
-export const endpointArgument = (
-  name: string,
-  args: readonly (
+/** One call or construction considered as a network request site. */
+export interface StaticEndpointCall {
+  readonly name: string;
+  readonly args: readonly (
     | t.Expression
     | t.SpreadElement
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
-  )[],
-  callee: t.Node,
-  read: StaticStringReader,
-  receiverFact?:
+  )[];
+  readonly callee: t.Node;
+  readonly receiverFact?:
     | "window"
     | "indexed-db"
     | "cache-storage"
     | "local"
     | "local-indexed-db"
-    | "local-cache-storage",
+    | "local-cache-storage"
+    | undefined;
+}
+
+/** Select the exact URL argument for recognized network callees. */
+export const endpointArgument = (
+  call: StaticEndpointCall,
+  read: StaticStringReader,
 ): t.Node | undefined => {
+  const { name, args, callee, receiverFact } = call;
   if (receiverFact === "window") return undefined;
   const first = argumentNode(args[0]);
   const exact = read(first) === undefined ? undefined : first;
   if (name === "fetch" || name.endsWith(".fetch") || name === "WebSocket")
     return exact;
-  if (name.endsWith(".open"))
-    return xhrOpenUrl(name, args[0], args[1], read, receiverFact);
+  if (name.endsWith(".open")) return xhrOpenUrl(call, read);
   const method = ["get", "post", "put", "patch", "delete", "request"].find(
     (candidate) => name === candidate || name.endsWith(`.${candidate}`),
   );

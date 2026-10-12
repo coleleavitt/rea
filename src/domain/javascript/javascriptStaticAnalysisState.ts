@@ -52,6 +52,8 @@ export interface JavaScriptAnalysisAccumulator {
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** `preload` attributes of audio and video elements, which are not scripts. */
   readonly mediaElementPreloads: WeakSet<t.Node>;
+  /** Value expressions already reported as call-site or route endpoints. */
+  readonly consumedValueNodes: WeakSet<t.Node>;
   readonly seen: Set<string>;
   visitedNodes: number;
   unknownFindings: number;
@@ -121,6 +123,7 @@ export const createJavaScriptAnalysisAccumulator = (
   nativeAddonBindings: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   mediaElementPreloads: new WeakSet(),
+  consumedValueNodes: new WeakSet(),
   seen: new Set(),
   visitedNodes: 0,
   unknownFindings: 0,

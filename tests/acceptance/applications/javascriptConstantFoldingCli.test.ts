@@ -140,6 +140,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           value: "https://api.example.invalid/v1/me",
           expression: 'base + "/v1/" + String.fromCharCode(109, 101)',
           mechanism: "call:fetch",
+          url_class: "http",
+          host: "api.example.invalid",
+          property_path: null,
         },
         evidence: expect.objectContaining({
           limitations: expect.arrayContaining([

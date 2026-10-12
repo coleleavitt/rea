@@ -182,11 +182,13 @@ const inspectCall = (
   }
   const endpoint = stringValue(
     endpointArgument(
-      name,
-      node.arguments,
-      node.callee,
+      {
+        name,
+        args: node.arguments,
+        callee: node.callee,
+        receiverFact: openReceiverFacts.get(node.start ?? -1),
+      },
       stringValue,
-      openReceiverFacts.get(node.start ?? -1),
     ),
   );
   if (endpoint !== undefined)
