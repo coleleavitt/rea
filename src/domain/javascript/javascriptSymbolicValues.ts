@@ -1,5 +1,7 @@
 import type * as t from "@babel/types";
 
+import type { ElectronApiIdentity } from "./electronStaticAnalysisTypes.js";
+
 /** A lexical substitution environment, never a JavaScript execution context. */
 export interface SymbolicEnvironment {
   readonly values: ReadonlyMap<string, SymbolicValue>;
@@ -41,7 +43,12 @@ export type SymbolicValue = (
       readonly kind: "literal";
       readonly value: string | number | boolean | null | undefined;
     }
-  | { readonly kind: "external"; readonly path: readonly string[] }
+  | {
+      readonly kind: "external";
+      readonly path: readonly string[];
+      /** Inferred Electron identity; absent for a proven module origin. */
+      readonly identity?: ElectronApiIdentity;
+    }
   | {
       readonly kind: "object";
       readonly node: t.ObjectExpression;

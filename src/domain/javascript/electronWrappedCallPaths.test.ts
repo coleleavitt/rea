@@ -550,3 +550,63 @@ describe("wrapped Electron API identity", () => {
     );
   });
 });
+
+describe("substituted wrapper values", () => {
+  it("folds channels built from substituted arguments with the constant operators", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const e=require("electron");
+      function send(name){e.ipcRenderer.send("app:"+name)}
+      function invoke(kind){return e.ipcRenderer.invoke(\`app:\${kind}:\${["a",void kind].join("-")}\`)}
+      e.contextBridge.exposeInMainWorld("desktop",{copy:()=>send("copy"),paste:()=>invoke("paste")});
+    `);
+    expect(
+      result.electron.call_paths?.map(({ entry, channel }) => [entry, channel]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["desktop.copy", "app:copy"],
+        ["desktop.paste", "app:paste:a-"],
+      ]),
+    );
+  });
+  it("traces a handler registered through an inferred wrapper parameter", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const electron=require("electron");
+      function setup(ipc){
+        function register(channel){ipc.handle(channel,event=>event.sender.copy())}
+        register("wrapped:copy");
+      }
+      setup(electron.ipcMain);
+    `);
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({
+        entry_kind: "ipc-handler",
+        channel: "wrapped:copy",
+        terminal: "ipc-event.sender.copy",
+      }),
+    );
+    expect(result.electron.ipc).toContainEqual(
+      expect.objectContaining({
+        channel: "wrapped:copy",
+        resolution_basis: "wrapper-substitution",
+        electron_identity: expect.objectContaining({
+          basis: "wrapper-parameter",
+          function_name: "setup",
+          parameter: "ipc",
+        }),
+      }),
+    );
+  });
+  it("traces handlers registered through an Electron import", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      import { ipcMain } from "electron";
+      ipcMain.on("imported:copy", event => event.sender.copy());
+    `);
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({
+        entry_kind: "ipc-handler",
+        channel: "imported:copy",
+        terminal: "ipc-event.sender.copy",
+      }),
+    );
+  });
+});

@@ -55,6 +55,12 @@ interface ArgumentOutcome {
  * one wrapper level: argument expressions must be proven Electron exports, an
  * object literal member holding one, or a `??`, `||`, `&&` or conditional
  * branch of those. Every other argument stays an explicit unresolved count.
+ *
+ * This is a summary over all call sites. Symbolic call-path substitution binds
+ * each call site's own arguments and reads this summary only for a parameter
+ * that no call site on its path binds. The summary cannot reuse that
+ * substitution: it belongs to the identity index the substitution reads, and
+ * it records proving argument locations that substituted values do not carry.
  */
 export const createElectronWrapperParameters = (
   state: JavaScriptSemanticAnalysisState,
