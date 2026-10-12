@@ -153,6 +153,12 @@ const addChannelNode = (
           ...(finding.invocation_location === undefined
             ? {}
             : { invocation_location: finding.invocation_location }),
+          ...(finding.guard_alternatives === undefined
+            ? {}
+            : { guard_alternatives: finding.guard_alternatives }),
+          ...(finding.linked_operation === undefined
+            ? {}
+            : { linked_operation: finding.linked_operation }),
         },
         evidence: electronApiEvidence({
           file,
@@ -165,6 +171,16 @@ const addChannelNode = (
             finding.resolution_basis === "wrapper-substitution"
               ? [
                   "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified.",
+                  ...(finding.guard_alternatives === undefined
+                    ? []
+                    : [
+                        "The operation was only reached under the listed unresolved predicates and is not a pairing match.",
+                      ]),
+                  ...(finding.linked_operation === undefined
+                    ? []
+                    : [
+                        "The Electron call lies in a linked source reached through a global symbol registry slot; sharing one realm at runtime is assumed.",
+                      ]),
                 ]
               : finding.channel === null
                 ? [
@@ -203,6 +219,12 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
           ...(finding.invocation_location === undefined
             ? {}
             : { invocation_location: finding.invocation_location }),
+          ...(finding.guard_alternatives === undefined
+            ? {}
+            : { guard_alternatives: finding.guard_alternatives }),
+          ...(finding.linked_operation === undefined
+            ? {}
+            : { linked_operation: finding.linked_operation }),
         },
         evidence: electronApiEvidence({
           file,

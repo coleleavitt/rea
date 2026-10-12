@@ -28,6 +28,7 @@ export const symbolicLogicalRight = (
       "array",
       "record",
       "loader",
+      "promise",
     ].includes(left.kind)
       ? false
       : undefined;

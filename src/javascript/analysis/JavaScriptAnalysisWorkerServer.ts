@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { getHeapStatistics } from "node:v8";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
+import type { JavaScriptCompanionSource } from "../../domain/javascript/javascriptGlobalSymbolLinks.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
@@ -34,6 +35,7 @@ export interface JavaScriptWorkerSemanticAdmission {
 export interface JavaScriptSourceWorkerAnalyzer {
   (
     file: JavaScriptArtifactFile,
+    companions: readonly JavaScriptCompanionSource[],
     nodeBudget: number | null,
     callbacks: {
       readonly phase: (
@@ -117,11 +119,27 @@ const analyzeJob = async (
       throw new TypeError(
         "JavaScript worker source text digest does not match its request",
       );
+    const companions: JavaScriptCompanionSource[] = [];
+    for (const [index, companion] of (request.companions ?? []).entries()) {
+      const text = await readFile(
+        join(root, `${request.id}.companion-${String(index)}.source`),
+        "utf8",
+      );
+      if (
+        createHash("sha256").update(text).digest("hex") !==
+        companion.text_sha256
+      )
+        throw new TypeError(
+          "JavaScript worker companion text digest does not match its request",
+        );
+      companions.push({ path: companion.path, text });
+    }
     const result = await analyze(
       {
         ...request.file,
         text: { included: true, value: source },
       },
+      companions,
       request.node_budget,
       {
         phase: async (phase) => send({ kind: "phase", id: request.id, phase }),

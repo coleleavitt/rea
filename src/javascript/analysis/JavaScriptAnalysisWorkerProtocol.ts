@@ -34,6 +34,10 @@ export const javaScriptWorkerRequestSchema = z.strictObject({
     kind: z.literal("javascript"),
     unpacked: z.boolean(),
   }),
+  /** Companion sources written beside the source, in order, by text digest. */
+  companions: z
+    .array(z.strictObject({ path: z.string(), text_sha256: digestSchema }))
+    .optional(),
 });
 
 /** Parent admission after validated static observations have been retained. */

@@ -18,7 +18,10 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import {
+  childNodes,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
 
 type WrapperIdentity = Extract<
   ElectronApiIdentity,
@@ -40,7 +43,174 @@ interface DeferredRoot {
   readonly root: t.Identifier;
   readonly members: readonly string[];
   readonly parameter: WrapperParameter;
+  /** First argument of the deferred call, when it has one. */
+  readonly channel: t.Node | undefined;
 }
+
+/** Call sites from which wrapper substitution can start, and whether the search finished. */
+export interface WrapperEntries {
+  readonly calls: readonly t.CallExpression[];
+  /** False when WRAPPER_ENTRY_DEPTH stopped the search before every chain ended. */
+  readonly complete: boolean;
+}
+
+// Electron IPC operation member names on ipcMain and ipcRenderer.
+const IPC_OPERATIONS: ReadonlySet<string> = new Set([
+  "addListener",
+  "handle",
+  "handleOnce",
+  "invoke",
+  "on",
+  "once",
+  "postMessage",
+  "send",
+  "sendSync",
+  "sendToHost",
+]);
+// Bounds the backward search through forwarded wrapper parameters.
+const WRAPPER_ENTRY_DEPTH = 8;
+
+const parameterKey = ({ functionBinding, index }: WrapperParameter): string =>
+  `${functionBinding.bindingId}:${String(index)}`;
+
+/**
+ * The named-wrapper parameter an argument forwards, `null` for a parameter
+ * of an unnamed function, or `undefined` when the argument is not a
+ * parameter and its call site is an entry.
+ */
+const forwardedParameter = (
+  argument: t.CallExpression["arguments"][number] | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  parameterFor: (
+    root: t.Identifier,
+    binding: JavaScriptSemanticBindingState,
+  ) => WrapperParameter | undefined,
+): WrapperParameter | null | undefined => {
+  if (argument === undefined || !t.isExpression(argument)) return undefined;
+  const { root } = electronMemberPath(argument);
+  if (!t.isIdentifier(root)) return undefined;
+  const binding = resolveSemanticBindingState(state, root, root.name);
+  if (
+    binding?.kind !== "parameter" ||
+    binding.definitions.length !== 1 ||
+    binding.definitions[0]?.kind !== "parameter"
+  )
+    return undefined;
+  return parameterFor(root, binding) ?? null;
+};
+
+/** A named wrapper whose call sites replace inner calls that read its parameters. */
+interface EnclosingSearch {
+  readonly wrapper: t.Function;
+  readonly functionName: string;
+  readonly functionBinding: JavaScriptSemanticBindingState;
+  readonly from: t.CallExpression[];
+}
+
+type EntrySearch = WrapperParameter | EnclosingSearch;
+
+function* directCallSitesSteps(
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+  wrappers: readonly EntrySearch[],
+): Generator<
+  void,
+  {
+    readonly sites: ReadonlyMap<string, t.CallExpression[]>;
+    readonly escaped: ReadonlySet<string>;
+  }
+> {
+  const ids = new Set(
+    wrappers.map(({ functionBinding }) => functionBinding.bindingId),
+  );
+  const names = new Set(wrappers.map(({ functionName }) => functionName));
+  const sites = new Map<string, t.CallExpression[]>();
+  const escaped = new Set<string>();
+  yield* traverseJavaScriptAstSteps(program, {
+    enter: (node) => {
+      if (!t.isIdentifier(node) || !names.has(node.name)) return;
+      const parent = state.parentsByNode.get(node);
+      if (parent === undefined || !isReference(node, parent, state)) return;
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding === undefined || !ids.has(binding.bindingId)) return;
+      if (!t.isCallExpression(parent) || parent.callee !== node) {
+        escaped.add(binding.bindingId);
+        return;
+      }
+      const found = sites.get(binding.bindingId) ?? [];
+      found.push(parent);
+      sites.set(binding.bindingId, found);
+    },
+  });
+  return { sites, escaped };
+}
+
+const enclosingFunctionOf = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Function | undefined => {
+  let current = state.parentsByNode.get(node);
+  while (current !== undefined && !t.isFunction(current))
+    current = state.parentsByNode.get(current);
+  return current;
+};
+
+/** The named wrapper function directly enclosing a call. */
+const enclosingWrapper = (
+  call: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): Omit<EnclosingSearch, "from"> | undefined => {
+  const current = enclosingFunctionOf(call, state);
+  if (current === undefined) return undefined;
+  const named = wrapperName(current, state);
+  return named === undefined
+    ? undefined
+    : {
+        wrapper: current,
+        functionName: named.name,
+        functionBinding: named.binding,
+      };
+};
+
+/** Whether call arguments, outside nested functions, read a wrapper's parameters. */
+const readsParameters = (
+  call: t.CallExpression,
+  wrapper: t.Function,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const scopeId = semanticScopeId("function", wrapper);
+  const pending: t.Node[] = [...call.arguments];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (t.isFunction(node)) continue;
+    const parent = state.parentsByNode.get(node);
+    if (
+      t.isIdentifier(node) &&
+      parent !== undefined &&
+      isReference(node, parent, state)
+    ) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding?.kind === "parameter" && binding.scopeId === scopeId)
+        return true;
+      // Locals of the wrapper read the parameters their initializers read.
+      const initializer =
+        binding === undefined || visited.has(binding.bindingId)
+          ? undefined
+          : semanticStableInitializer(binding, state);
+      if (
+        binding !== undefined &&
+        initializer !== undefined &&
+        enclosingFunctionOf(initializer.node, state) === wrapper
+      ) {
+        visited.add(binding.bindingId);
+        pending.push(initializer.node);
+      }
+    }
+    pending.push(...childNodes(node));
+  }
+  return false;
+};
 
 interface ArgumentOutcome {
   readonly path: readonly string[] | undefined;
@@ -83,7 +253,11 @@ export const createElectronWrapperParameters = (
 
   return {
     /** Retain a call root whose identity may come from wrapper call sites. */
-    defer: (root: t.Node, members: readonly (string | null)[]): void => {
+    defer: (
+      root: t.Node,
+      members: readonly (string | null)[],
+      channel?: t.Node,
+    ): void => {
       if (!t.isIdentifier(root)) return;
       if (!members.every((member): member is string => member !== null)) return;
       const binding = resolveSemanticBindingState(state, root, root.name);
@@ -107,7 +281,8 @@ export const createElectronWrapperParameters = (
       )
         return;
       const parameter = parameterFor(root, binding);
-      if (parameter !== undefined) deferred.push({ root, members, parameter });
+      if (parameter !== undefined)
+        deferred.push({ root, members, parameter, channel });
     },
 
     /** Collect direct calls and other references of the deferred wrappers. */
@@ -138,6 +313,95 @@ export const createElectronWrapperParameters = (
           } else escaped.add(binding.bindingId);
         },
       });
+    },
+
+    /**
+     * Outermost same-file call sites of wrappers whose parameter receives an
+     * IPC-named call with a computed channel. A call site whose argument is
+     * itself a parameter of a named wrapper is followed to that wrapper's
+     * call sites, at most WRAPPER_ENTRY_DEPTH levels deep.
+     */
+    *collectEntriesSteps(program: t.Program): Generator<void, WrapperEntries> {
+      let frontier: EntrySearch[] = [];
+      const parameters = new Set<string>();
+      const enclosing = new Map<string, EnclosingSearch>();
+      const followParameter = (
+        parameter: WrapperParameter,
+        next: EntrySearch[],
+      ) => {
+        const key = parameterKey(parameter);
+        if (parameters.has(key)) return;
+        parameters.add(key);
+        next.push(parameter);
+      };
+      for (const { members, parameter, channel } of deferred)
+        if (
+          IPC_OPERATIONS.has(members.at(-1) ?? "") &&
+          channel !== undefined &&
+          !t.isStringLiteral(channel)
+        )
+          followParameter(parameter, frontier);
+      const calls = new Set<t.CallExpression>();
+      for (
+        let depth = 0;
+        depth < WRAPPER_ENTRY_DEPTH && frontier.length > 0;
+        depth += 1
+      ) {
+        const { sites, escaped } = yield* directCallSitesSteps(
+          program,
+          state,
+          frontier,
+        );
+        const next: EntrySearch[] = [];
+        for (const search of frontier) {
+          const found = sites.get(search.functionBinding.bindingId) ?? [];
+          if (
+            "from" in search &&
+            (found.length === 0 ||
+              escaped.has(search.functionBinding.bindingId))
+          ) {
+            // Callers of an escaping wrapper are unknown; its inner calls stay entries.
+            for (const call of search.from) calls.add(call);
+            continue;
+          }
+          for (const call of found) {
+            const forwarded =
+              "index" in search
+                ? forwardedParameter(
+                    call.arguments[search.index],
+                    state,
+                    parameterFor,
+                  )
+                : undefined;
+            if (forwarded === null) continue;
+            if (forwarded !== undefined) {
+              followParameter(forwarded, next);
+              continue;
+            }
+            // A call reading its enclosing wrapper's parameters is followed
+            // to that wrapper's direct call sites.
+            const wrapper = enclosingWrapper(call, state);
+            if (
+              wrapper === undefined ||
+              !readsParameters(call, wrapper.wrapper, state)
+            ) {
+              calls.add(call);
+              continue;
+            }
+            const existing = enclosing.get(wrapper.functionBinding.bindingId);
+            if (existing !== undefined) existing.from.push(call);
+            else {
+              const search = { ...wrapper, from: [call] };
+              enclosing.set(wrapper.functionBinding.bindingId, search);
+              next.push(search);
+            }
+          }
+        }
+        frontier = next;
+      }
+      for (const search of frontier)
+        if ("from" in search) for (const call of search.from) calls.add(call);
+      return { calls: [...calls], complete: frontier.length === 0 };
     },
 
     /** Resolve each deferred root whose call-site arguments agree on one export. */

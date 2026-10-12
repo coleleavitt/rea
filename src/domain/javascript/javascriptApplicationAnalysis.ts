@@ -49,6 +49,7 @@ const electronBoundarySummarySchema = z.strictObject({
     renderer_listeners: countSchema,
     main_handlers: countSchema,
     paired_renderer_transmissions: countSchema,
+    guarded_renderer_transmissions: countSchema,
     ambiguous_renderer_transmissions: countSchema,
     unpaired_literal_renderer_transmissions: countSchema,
   }),

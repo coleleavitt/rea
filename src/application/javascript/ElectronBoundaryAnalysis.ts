@@ -23,11 +23,15 @@ export interface ElectronIpcPairing {
   readonly handler: ElectronIpcRecord;
 }
 
-/** Pairing state for one renderer transmission without overclaiming ambiguity. */
+/**
+ * Pairing state for one renderer transmission without overclaiming
+ * ambiguity. A unique match is guarded when either operation was only
+ * reached under unresolved predicates.
+ */
 export interface ElectronIpcPairingState {
   readonly transmission: ElectronIpcRecord;
   readonly candidates: readonly ElectronIpcRecord[];
-  readonly status: "paired" | "ambiguous" | "unpaired";
+  readonly status: "paired" | "guarded" | "ambiguous" | "unpaired";
 }
 
 /** Flatten all per-file IPC facts into deterministic application records. */
@@ -58,12 +62,16 @@ export const classifyElectronIpcPairings = (
               handler.finding.channel === transmission.finding.channel &&
               compatibleIpcModes(transmission.finding, handler.finding),
           );
+    const [candidate] = candidates;
     return {
       transmission,
       candidates,
       status:
-        candidates.length === 1
-          ? "paired"
+        candidate !== undefined && candidates.length === 1
+          ? transmission.finding.guard_alternatives === undefined &&
+            candidate.finding.guard_alternatives === undefined
+            ? "paired"
+            : "guarded"
           : candidates.length > 1
             ? "ambiguous"
             : "unpaired",
@@ -172,6 +180,9 @@ export const summarizeElectronBoundaries = (
       main_handlers: ipc.filter(isMainHandler).length,
       paired_renderer_transmissions: pairing.filter(
         ({ status }) => status === "paired",
+      ).length,
+      guarded_renderer_transmissions: pairing.filter(
+        ({ status }) => status === "guarded",
       ).length,
       ambiguous_renderer_transmissions: pairing.filter(
         ({ status }) => status === "ambiguous",

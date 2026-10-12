@@ -120,7 +120,11 @@ describe("Electron API identity through wrapper parameters", () => {
         },
       },
     ]);
-    expect(analysis.electron.ipc).toMatchObject([
+    expect(
+      analysis.electron.ipc.filter(
+        ({ resolution_basis }) => resolution_basis === undefined,
+      ),
+    ).toMatchObject([
       {
         channel: "local:ping",
         electron_identity: {
@@ -129,6 +133,14 @@ describe("Electron API identity through wrapper parameters", () => {
           unresolved_values: 0,
         },
       },
+    ]);
+    expect(
+      analysis.electron.ipc
+        .filter(({ channel }) => channel === "mixed")
+        .map(({ side, guard_alternatives }) => ({ side, guard_alternatives })),
+    ).toMatchObject([
+      { side: "main", guard_alternatives: [[{ expression: "flag" }]] },
+      { side: "renderer", guard_alternatives: [[{ expression: "!(flag)" }]] },
     ]);
   });
 });

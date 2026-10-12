@@ -1,3 +1,4 @@
+import type { JavaScriptCompanionSource } from "../../domain/javascript/javascriptGlobalSymbolLinks.js";
 import { constants } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -179,6 +180,7 @@ export class JavaScriptAnalysisWorker {
     file: JavaScriptArtifactFile,
     nodeBudget: number | null,
     signal?: AbortSignal,
+    companions: readonly JavaScriptCompanionSource[] = [],
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -224,6 +226,12 @@ export class JavaScriptAnalysisWorker {
         mode: 0o600,
         signal: deadline.signal,
       });
+      for (const [index, companion] of companions.entries())
+        await writeFile(
+          join(root.path, `${id}.companion-${String(index)}.source`),
+          companion.text,
+          { flag: "wx", mode: 0o600, signal: deadline.signal },
+        );
       const { text: _text, ...metadata } = file;
       let offeredResultBudget = 0;
       const request = javaScriptWorkerRequestSchema.parse({
@@ -231,6 +239,14 @@ export class JavaScriptAnalysisWorker {
         node_budget: nodeBudget,
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
+        ...(companions.length === 0
+          ? {}
+          : {
+              companions: companions.map(({ path, text }) => ({
+                path,
+                text_sha256: createHash("sha256").update(text).digest("hex"),
+              })),
+            }),
       });
       const frame = `${JSON.stringify(request)}\n`;
       if (Buffer.byteLength(frame) > DEFAULTS.protocolBytes)
@@ -438,7 +454,12 @@ export class JavaScriptAnalysisWorker {
     // cleanup uncertainty, close retains this owner for a later retry.
     if (this.#root !== undefined && !pendingCleanup.has(this)) {
       try {
-        for (const suffix of ["source", "static.json", "records"])
+        for (const suffix of [
+          "source",
+          "static.json",
+          "records",
+          ...companions.map((_, index) => `companion-${String(index)}.source`),
+        ])
           await rm(join(this.#root.path, `${id}.${suffix}`), { force: true });
       } catch (cause: unknown) {
         pendingCleanup.add(this);

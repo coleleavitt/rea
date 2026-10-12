@@ -81,6 +81,11 @@ const electronFindingContext = {
   ...findingContext,
   electron_identity: electronIdentity,
 };
+const pathCondition = z.strictObject({
+  expression: z.string(),
+  location: range,
+  source_path: z.string().exactOptional(),
+});
 const nullHandler = { handler_kind: z.null(), handler_location: z.null() };
 const missingHandler = {
   handler_kind: z.literal("missing"),
@@ -100,6 +105,10 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     z.strictObject({
       ...electronFindingContext,
       invocation_location: range.optional(),
+      guard_alternatives: z.array(z.array(pathCondition)).optional(),
+      linked_operation: z
+        .strictObject({ source_path: z.string(), location: range })
+        .optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
       channel: z.string(),
@@ -108,6 +117,10 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     z.strictObject({
       ...electronFindingContext,
       invocation_location: range.optional(),
+      guard_alternatives: z.array(z.array(pathCondition)).optional(),
+      linked_operation: z
+        .strictObject({ source_path: z.string(), location: range })
+        .optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
       channel: z.string(),
@@ -116,6 +129,10 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     z.strictObject({
       ...electronFindingContext,
       invocation_location: range.optional(),
+      guard_alternatives: z.array(z.array(pathCondition)).optional(),
+      linked_operation: z
+        .strictObject({ source_path: z.string(), location: range })
+        .optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
       channel: z.null(),
@@ -162,13 +179,21 @@ const ipc = z
     }),
   ])
   .transform((value) => {
-    const { module_runtime, resolution_basis, invocation_location, ...rest } =
-      value;
+    const {
+      module_runtime,
+      resolution_basis,
+      invocation_location,
+      guard_alternatives,
+      linked_operation,
+      ...rest
+    } = value;
     return {
       ...rest,
       ...(module_runtime === undefined ? {} : { module_runtime }),
       ...(resolution_basis === undefined ? {} : { resolution_basis }),
       ...(invocation_location === undefined ? {} : { invocation_location }),
+      ...(guard_alternatives === undefined ? {} : { guard_alternatives }),
+      ...(linked_operation === undefined ? {} : { linked_operation }),
     };
   });
 const windowShape = {
@@ -223,11 +248,10 @@ const electron = z
               location: range,
               module_key: z.string().nullable(),
               module_runtime: z.string().nullable(),
+              source_path: z.string().exactOptional(),
             }),
           ),
-          conditions: z.array(
-            z.strictObject({ expression: z.string(), location: range }),
-          ),
+          conditions: z.array(pathCondition),
         }),
       )
       .optional(),

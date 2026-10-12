@@ -58,6 +58,7 @@ const summary = {
     renderer_listeners: 0,
     main_handlers: 0,
     paired_renderer_transmissions: 0,
+    guarded_renderer_transmissions: 0,
     ambiguous_renderer_transmissions: 0,
     unpaired_literal_renderer_transmissions: 0,
   },

@@ -1,3 +1,4 @@
+import type { JavaScriptCompanionSource } from "./javascriptGlobalSymbolLinks.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { Result } from "../result.js";
@@ -37,6 +38,8 @@ export interface JavaScriptSourceAnalysisPort {
     file: JavaScriptArtifactFile,
     nodeBudget: number | null,
     signal?: AbortSignal,
+    /** Other sources whose global symbol registry slots this source may read. */
+    companions?: readonly JavaScriptCompanionSource[],
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   /** Limits that offered each analyzed source its semantic-fact byte budget. */
   coverageLimits(): ApplicationCoverage["limits"];

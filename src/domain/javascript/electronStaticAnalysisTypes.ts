@@ -147,6 +147,20 @@ interface ElectronIpcFindingContext {
   readonly location: JavaScriptSourceRange;
   /** Outer syntax invocation when a wrapper produced this underlying IPC call. */
   readonly invocation_location?: JavaScriptSourceRange;
+  /**
+   * Predicate conjunctions under which wrapper substitution reached this
+   * operation; it occurs when any conjunction holds. Absent when it was
+   * reached unconditionally. A guarded operation is never a pairing match.
+   */
+  readonly guard_alternatives?: readonly (readonly ElectronPathCondition[])[];
+  /**
+   * The underlying Electron call when it lies in a linked source; `location`
+   * is then the call of this source that reached it.
+   */
+  readonly linked_operation?: {
+    readonly source_path: string;
+    readonly location: JavaScriptSourceRange;
+  };
 }
 
 /**
@@ -359,6 +373,16 @@ export interface ElectronCallPathStep {
   readonly location: JavaScriptSourceRange;
   readonly module_key: string | null;
   readonly module_runtime: string | null;
+  /** Artifact path of a linked source holding this step; absent for this source. */
+  readonly source_path?: string;
+}
+
+/** One unresolved branch predicate on a substituted path. */
+export interface ElectronPathCondition {
+  readonly expression: string;
+  readonly location: JavaScriptSourceRange;
+  /** Artifact path of a linked source holding the predicate; absent for this source. */
+  readonly source_path?: string;
 }
 
 /** A statically substituted candidate, never a runtime reachability claim. */
@@ -369,10 +393,7 @@ export interface ElectronCallPath {
   readonly terminal: string;
   readonly resolution: "candidate";
   readonly steps: readonly ElectronCallPathStep[];
-  readonly conditions: readonly {
-    readonly expression: string;
-    readonly location: JavaScriptSourceRange;
-  }[];
+  readonly conditions: readonly ElectronPathCondition[];
 }
 
 /** Number of Electron findings, counted once for limits and limitations. */

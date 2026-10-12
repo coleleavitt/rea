@@ -21,6 +21,7 @@ import {
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
+  companions,
   nodeBudget,
   callbacks,
 ) => {
@@ -41,6 +42,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       file.text.value,
       parsed,
       receivers,
+      companions,
     ),
   );
   const admission = await callbacks.checkpoint(facts);

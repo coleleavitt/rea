@@ -488,6 +488,44 @@ the per-file semantic budget; omitted general semantics remain explicitly
 partial. Wrapper expansion is bounded by one million visits/substitutions and
 128 nested substitutions, with exhaustion reported as unknown coverage.
 
+Wrapper substitution also starts from the outermost same-file call sites of
+wrappers whose parameter receives an IPC-named call (`handle`, `on`, `invoke`,
+`send`, and similar) with a computed channel. A call site that passes such a
+parameter on, or whose arguments read its enclosing named wrapper's
+parameters, is followed to that wrapper's direct call sites, at most eight
+levels deep; an escaping wrapper keeps the inner call as the start. Templates
+and string concatenation fold through the value lattice, so generated channel
+families such as `dune-rpc:${edge}:m:${method}` become exact channels when the
+edge and method names are static. `for...of` loops substitute each element of
+an exact array, including `Object.entries`, `keys`, and `values` of exact
+objects and `Array.prototype.map` results. A fresh local object written per
+iterated key, or by direct and short-circuit statements that complete before
+it is read, keeps those members; other writes leave it unresolved. Getters of
+object literals are evaluated, and an absent key of a closed literal reads
+`undefined` unless it names an `Object.prototype` member. esbuild `__commonJS`
+wrappers and `__toESM` conversions, in source or minified spelling, are
+recognized structurally. Promise fulfillment callbacks run for
+`Promise.resolve()` values and, under an `is fulfilled` predicate, for
+`new Promise(...)` values. IPC handler bodies are traced after every
+reachable registration, as code dispatched from the event loop, each with an
+equal share of the remaining budget.
+
+A top-level `globalThis[Symbol.for(key)] = value` publication in another
+source of the artifact is linked when it is the only publication of a key this
+source reads. Both sources are assumed to share one realm. Steps in the linked
+source carry its `source_path`; an IPC operation found there keeps the call of
+this source that reached it as `location` and the linked call as
+`linked_operation`.
+
+A substituted IPC operation reached only under unresolved predicates is
+reported with `guard_alternatives`: predicate conjunctions of which at least
+one holds when it occurs. Conjunctions that differ only by the polarity of one
+predicate evaluated in the same activation are merged; an operation reached on
+both sides is unconditional. A guarded registration also reached
+unconditionally from an outer call is not reported again. A unique channel
+match involving a guarded operation has pairing status `guarded`, is counted
+as `guarded_renderer_transmissions`, and receives no pairing edge.
+
 Electron API identity follows proven lexical module aliases. Namespace interop
 also preserves identity when the complete Rolldown helper operations, lexical
 roles, live getters, and captured intrinsic origins match, or when a stable
@@ -545,7 +583,8 @@ function is also referenced other than as a callee. The syntax observation is
 unchanged, but the relationship from the containing source to the window or
 handler is an inference: `medium` confidence when every call site is known and
 resolved, otherwise `low`. Deeper wrapper chains, calls from other files, and
-writes to the parameter inside the wrapper are not examined.
+writes to the parameter inside the wrapper are not examined for this identity;
+wrapper substitution follows deeper chains separately.
 
 A local binding with one stable initializer that is a `??`, `||`, `&&`,
 conditional, or object literal is examined the same way, for example
