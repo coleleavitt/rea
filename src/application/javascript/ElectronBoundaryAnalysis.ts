@@ -1,5 +1,10 @@
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
-import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import { posix } from "node:path";
+
+import type {
+  ElectronIpcFinding,
+  ElectronNativeAddonBindingFinding,
+} from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -185,15 +190,9 @@ export const summarizeElectronBoundaries = (
         }),
     ).length,
     native_addon_bindings: nativeBindings.length,
-    resolved_native_addon_bindings: nativeBindings.filter(({ file, finding }) =>
-      resolvesToFile({
-        file,
-        specifier: finding.specifier,
-        context: "module-specifier",
-        files,
-        kind: "native-addon",
-        moduleKind: finding.module_kind,
-      }),
+    resolved_native_addon_bindings: nativeBindings.filter(
+      ({ file, finding }) =>
+        resolveElectronNativeAddon(file, finding, files).resolved_path !== null,
     ).length,
     inferred_api_identity_findings: identities.filter(
       ({ basis }) => basis !== "module-binding",
@@ -230,6 +229,97 @@ interface ResolveToFileInput {
   readonly kind?: JavaScriptArtifactFile["kind"];
   readonly moduleKind?: "import" | "require";
 }
+
+/** Where a JavaScript-side native binding points in the inventory. */
+export interface ElectronNativeAddonResolution {
+  readonly resolved_path: string | null;
+  /** Inventoried `.node` files the loader could select. */
+  readonly candidates: readonly string[];
+  readonly basis: "specifier" | "loader-package-root";
+}
+
+// node-gyp-build and bindings search their package's build and prebuild trees.
+const LOADER_ADDON =
+  /^(?:build\/(?:Release|Debug)|prebuilds\/[^/]+)\/[^/]+\.node$/u;
+
+/**
+ * Resolve one native binding. A specifier is resolved as a module or
+ * filesystem path. `bindings` and `node-gyp-build` select a file at runtime,
+ * so their candidates are the add-ons in the build and prebuild directories of
+ * the nearest inventoried package root; one candidate resolves, more remain
+ * candidates. `bindings` candidates must also match the requested name.
+ */
+export const resolveElectronNativeAddon = (
+  file: JavaScriptArtifactFile,
+  finding: ElectronNativeAddonBindingFinding,
+  files: ReadonlyMap<string, JavaScriptArtifactFile>,
+): ElectronNativeAddonResolution => {
+  if (finding.loader === "bindings" || finding.loader === "node-gyp-build") {
+    const root = packageRoot(file.path, files);
+    const wanted =
+      finding.loader === "bindings" && finding.specifier_status === "literal"
+        ? finding.specifier.replace(/\.node$/u, "") + ".node"
+        : undefined;
+    const candidates =
+      root === undefined
+        ? []
+        : [...files.values()]
+            .filter(({ path, kind }) => {
+              const relative = root === "" ? path : path.slice(root.length + 1);
+              return (
+                kind === "native-addon" &&
+                (root === "" || path.startsWith(`${root}/`)) &&
+                LOADER_ADDON.test(relative) &&
+                (wanted === undefined || posix.basename(path) === wanted)
+              );
+            })
+            .map(({ path }) => path)
+            .sort(compareUnicodeCodePoints);
+    return {
+      resolved_path: candidates.length === 1 ? (candidates[0] ?? null) : null,
+      candidates,
+      basis: "loader-package-root",
+    };
+  }
+  const resolved =
+    finding.specifier_status === "literal"
+      ? resolveArtifactPathByContext({
+          declaredPath: finding.specifier,
+          sourcePath: file.path,
+          context:
+            finding.loader === "process-dlopen"
+              ? "filesystem-expression"
+              : "module-specifier",
+          files,
+          moduleKind: finding.module_kind,
+        }).resolved_path
+      : null;
+  const addon =
+    resolved !== null && files.get(resolved)?.kind === "native-addon"
+      ? resolved
+      : null;
+  return {
+    resolved_path: addon,
+    candidates: addon === null ? [] : [addon],
+    basis: "specifier",
+  };
+};
+
+const packageRoot = (
+  path: string,
+  files: ReadonlyMap<string, JavaScriptArtifactFile>,
+): string | undefined => {
+  for (
+    let directory = posix.dirname(path);
+    ;
+    directory = posix.dirname(directory)
+  ) {
+    const root = directory === "." ? "" : directory;
+    if (files.has(root === "" ? "package.json" : `${root}/package.json`))
+      return root;
+    if (root === "") return undefined;
+  }
+};
 
 const resolvesToFile = (input: ResolveToFileInput): boolean => {
   const resolved = resolveArtifactPathByContext({

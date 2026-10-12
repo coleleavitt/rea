@@ -66,11 +66,22 @@ export interface ElectronApiObject {
   readonly memberWrites: boolean;
 }
 
+/** A call that loads a module through a native or CommonJS loader. */
+export interface JavaScriptNativeLoaderCall {
+  readonly loader: NonNullable<ElectronNativeAddonBindingFinding["loader"]>;
+  /** How the callee was tied to the loader. */
+  readonly basis: NonNullable<
+    ElectronNativeAddonBindingFinding["loader_basis"]
+  >;
+}
+
 /** Electron facts recovered from lexical bindings before the finding scan. */
 export interface JavaScriptElectronSemanticFacts {
   readonly callees: ReadonlyMap<number, ElectronCalleeBinding>;
   /** Bound API objects by identifier offset. */
   readonly apiObjects: ReadonlyMap<number, ElectronApiObject>;
+  /** Native and CommonJS loader calls; nested calls can share an offset. */
+  readonly loaders: WeakMap<t.Node, JavaScriptNativeLoaderCall>;
 }
 
 /** Shared source and accumulator for helper inspections. */

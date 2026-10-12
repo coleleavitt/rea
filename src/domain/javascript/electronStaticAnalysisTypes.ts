@@ -181,8 +181,18 @@ export type ElectronUtilityProcessFinding = ElectronUtilityProcessFindingState &
 
 /** JavaScript-side binding or re-export requested from one native .node addon. */
 export interface ElectronNativeAddonBindingFinding {
+  /** Module specifier, loader argument, or the dynamic argument expression. */
   readonly specifier: string;
-  readonly binding_kind: "import" | "require" | "re-export";
+  readonly specifier_status: "literal" | "dynamic";
+  readonly binding_kind: "import" | "require" | "re-export" | "loader";
+  /** Loader that performs the load; null for a plain import or require. */
+  readonly loader:
+    | "create-require"
+    | "bindings"
+    | "node-gyp-build"
+    | "process-dlopen"
+    | null;
+  readonly loader_basis: "direct" | "alias" | "parameter-default" | null;
   readonly module_kind: "import" | "require";
   /** Exact requested addon member keys; namespace and dynamic access are separate. */
   readonly members: readonly string[];

@@ -312,7 +312,17 @@ Selected bounded text is then parsed as inert data to recover:
 - sender, frame, URL, and origin validation candidates without claiming that a
   visible check enforces a complete policy;
 - utility-process entrypoints and native `.node` binding requests without
-  parsing or executing the add-on.
+  parsing or executing the add-on. Loader calls are included: a function from
+  `module.createRequire`, the `bindings` and `node-gyp-build` packages, and
+  `process.dlopen`, reached directly, through one stable alias
+  (`loader_basis: alias`), or through a parameter default value
+  (`parameter-default`). A `createRequire` call with a non-`.node` specifier is
+  a `require` reference. `bindings` and `node-gyp-build` choose their add-on at
+  runtime, so the candidates are the `.node` files in `build/Release`,
+  `build/Debug`, and `prebuilds/*` of the nearest inventoried package root
+  (`resolution_basis: loader-package-root`); exactly one candidate resolves the
+  binding with low confidence. Members read from a loader result are not
+  followed.
 
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,

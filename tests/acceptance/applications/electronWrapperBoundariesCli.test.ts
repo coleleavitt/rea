@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -32,6 +32,14 @@ function harden(contents) {
     if (!params.src.startsWith("https:")) delete params.src;
   });
 }
+const dialogs = injected.electron ?? { BrowserWindow: electron.BrowserWindow };
+new dialogs.BrowserWindow({ show: false });
+const { createRequire } = require("node:module");
+const load = createRequire(__filename);
+function proclist(requireAddon = load) { return requireAddon("proclist"); }
+load("./native/direct.node");
+process.dlopen(module, path.join(__dirname, "native", "direct.node"));
+require("gyp");
 throw new Error("must not execute main");
 `;
 
@@ -47,6 +55,9 @@ patched.late = 2;
 contextBridge.exposeInMainWorld("patched", patched);
 throw new Error("must not execute preload");
 `;
+
+// ELF magic only; native files are inventoried, never loaded.
+const NATIVE = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
 
 type Graph = z.infer<typeof javascriptApplicationAnalysisResultSchema>["graph"];
 
@@ -203,6 +214,49 @@ const expectWindowsAndWebviews = (graph: Graph): void => {
   ).toBe(true);
 };
 
+const expectLocalAlternatives = (graph: Graph): void => {
+  expect(
+    located(graph, "browser-window", 25)?.observations[0]?.properties,
+  ).toMatchObject({
+    electron_identity: {
+      basis: "local-alternatives",
+      binding: "dialogs",
+      unresolved_values: 1,
+    },
+  });
+};
+
+const expectNativeLoaders = (graph: Graph): void => {
+  const bindings = graph.nodes.flatMap(({ kind, observations }) =>
+    kind === "native-export"
+      ? observations.map(({ properties }) => properties)
+      : [],
+  );
+  expect(bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        specifier: "./native/direct.node",
+        loader: "create-require",
+        loader_basis: "alias",
+        resolved_path: "native/direct.node",
+      }),
+      expect.objectContaining({
+        binding_kind: "loader",
+        loader: "process-dlopen",
+        specifier: "native/direct.node",
+        resolved_path: "native/direct.node",
+      }),
+      expect.objectContaining({
+        binding_kind: "loader",
+        loader: "node-gyp-build",
+        resolution_basis: "loader-package-root",
+        resolved_path: "node_modules/gyp/build/Release/gyp.node",
+        candidate_paths: ["node_modules/gyp/build/Release/gyp.node"],
+      }),
+    ]),
+  );
+};
+
 const expectBridgeObjects = (graph: Graph): void => {
   expect(
     located(graph, "context-bridge-api", 2)?.observations[0]?.properties,
@@ -252,21 +306,44 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         join(root, "webview-preload.cjs"),
         'throw new Error("inert preload");\n',
       ),
+      mkdir(join(root, "native")).then(() =>
+        writeFile(join(root, "native", "direct.node"), NATIVE),
+      ),
+      mkdir(join(root, "node_modules", "gyp", "build", "Release"), {
+        recursive: true,
+      }).then(() =>
+        Promise.all([
+          writeFile(
+            join(root, "node_modules", "gyp", "package.json"),
+            JSON.stringify({ name: "gyp", main: "index.js" }),
+          ),
+          writeFile(
+            join(root, "node_modules", "gyp", "index.js"),
+            'module.exports = require("node-gyp-build")(__dirname);\n',
+          ),
+          writeFile(
+            join(root, "node_modules", "gyp", "build", "Release", "gyp.node"),
+            NATIVE,
+          ),
+        ]),
+      ),
     ]);
 
     const { graph, summary } = await analyze(surface, cli, root);
 
     expect(summary).toMatchObject({
-      browser_windows: 1,
+      browser_windows: 2,
       web_contents_views: 1,
       webview_attach_handlers: 1,
       preload_entrypoints: 2,
-      inferred_api_identity_findings: 4,
+      inferred_api_identity_findings: 5,
       context_bridge_apis: 3,
       ipc: { main_handlers: 2, paired_renderer_transmissions: 1 },
     });
     expectWrapperIdentities(graph);
     expectWindowsAndWebviews(graph);
     expectBridgeObjects(graph);
+    expectLocalAlternatives(graph);
+    expectNativeLoaders(graph);
   },
 );

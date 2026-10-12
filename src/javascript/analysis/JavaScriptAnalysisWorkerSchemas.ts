@@ -256,7 +256,17 @@ const electron = z.strictObject({
     z.strictObject({
       ...findingContext,
       specifier: z.string(),
-      binding_kind: z.enum(["import", "require", "re-export"]),
+      specifier_status: z.enum(["literal", "dynamic"]),
+      binding_kind: z.enum(["import", "require", "re-export", "loader"]),
+      loader: z
+        .enum([
+          "create-require",
+          "bindings",
+          "node-gyp-build",
+          "process-dlopen",
+        ])
+        .nullable(),
+      loader_basis: z.enum(["direct", "alias", "parameter-default"]).nullable(),
       module_kind: z.enum(["import", "require"]),
       members: strings,
       namespace_access: z.boolean().optional(),

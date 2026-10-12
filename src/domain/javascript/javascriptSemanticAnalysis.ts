@@ -53,7 +53,11 @@ import {
   isContextBridgeExposure,
   resolveElectronApiObjects,
 } from "./javascriptElectronApiObjects.js";
-import type { JavaScriptElectronSemanticFacts } from "./javascriptStaticAnalysisState.js";
+import type {
+  JavaScriptElectronSemanticFacts,
+  JavaScriptNativeLoaderCall,
+} from "./javascriptStaticAnalysisState.js";
+import { createNativeLoaderClassifier } from "./javascriptNativeLoaders.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronExportPath,
@@ -379,6 +383,7 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
 ): Generator<void, JavaScriptElectronSemanticFacts> {
   const facts = new Map<number, ElectronCalleeBinding>();
   const exposures: (t.CallExpression | t.OptionalCallExpression)[] = [];
+  const loaders = new WeakMap<t.Node, JavaScriptNativeLoaderCall>();
   const memberWritten = new Set<string>();
   const state = createState(file.program);
   yield* collectDefinitionsSteps(file.program, state);
@@ -437,6 +442,25 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
   );
   collectedWrites = true;
   const wrappers = createElectronWrapperParameters(state, rootExport);
+  const moduleOrigin = (node: t.Node): JavaScriptModuleOrigin | undefined => {
+    const { root, members } = electronMemberPath(node);
+    if (!members.every((member): member is string => member !== null))
+      return undefined;
+    let origin: JavaScriptModuleOrigin | undefined;
+    if (t.isIdentifier(root)) {
+      if (semanticResolutionBlocked(state, root, root.name)) return undefined;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (binding === undefined) return undefined;
+      origin = interop.origin(binding)?.origin ?? bindingOrigin(binding, state);
+    } else
+      origin =
+        interop.callOrigin(root)?.origin ??
+        semanticRequireOrigin(root, state)?.origin;
+    return origin === undefined
+      ? undefined
+      : { ...origin, importedPath: [...origin.importedPath, ...members] };
+  };
+  const nativeLoader = createNativeLoaderClassifier(state, moduleOrigin);
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
       if (
@@ -446,8 +470,11 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
       )
         return;
       const { root, members } = electronMemberPath(node.callee);
-      if (!t.isNewExpression(node) && isContextBridgeExposure(members.at(-1)))
-        exposures.push(node);
+      if (!t.isNewExpression(node)) {
+        if (isContextBridgeExposure(members.at(-1))) exposures.push(node);
+        const loader = nativeLoader(node);
+        if (loader !== undefined) loaders.set(node, loader);
+      }
       const exported = rootExport(root);
       if (exported === undefined) {
         wrappers.defer(root, members);
@@ -473,6 +500,7 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
       facts,
       memberWritten,
     ),
+    loaders,
   };
 }
 
