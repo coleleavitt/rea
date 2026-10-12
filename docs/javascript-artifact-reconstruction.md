@@ -300,6 +300,31 @@ Selected bounded text is then parsed as inert data to recover:
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
 
+Electron option values, IPC channels, contextBridge keys, sender checks, and
+network endpoint arguments are read through the semantic value lattice.
+Literal syntax reports `literal`. A value folded from constant operators
+(`!0`, `void`, `typeof`, arithmetic, comparison, `+`, templates,
+`[...].join(sep)`, `String.fromCharCode(...)`) or read through a binding with a
+single initializer reports the exact value with its source expression: status
+`derived` for Electron values, and both the value and its `*_expression` for
+channels, keys, and endpoints. IPC pairing treats derived channels as exact and
+marks the pairing basis `unique-exact-derived-channel`. Only JSON primitives
+become values: `void 0` and `1/0` alone stay dynamic, though they fold as
+operands. Folding assumes the unmodified `String.fromCharCode` and
+`Array.prototype.join` built-ins. If member-write recovery for a file exceeds a
+resource limit, that file reports literal values only and records the reason.
+
+URL-like strings in data are reported as `data` endpoints alongside `route`
+and `network` endpoints, which are consumed at a recognized route or call site.
+Data endpoints come from string literals and object keys, template text, and
+maximal folded expressions. Each endpoint carries `url_class` (`http`,
+`websocket`, `host`, `path`, `data`, `blob`, or `file`), `host`, and, for data
+values, `property_path` from the nearest named container, such as
+`["Voice", "DIALABLE_ORIGIN"]` or `["PROVIDERS", "Map()", "0", "0", "0"]`.
+Host-only values must be lowercase DNS names under a two-letter IANA country
+code or a common generic top-level domain; this classification is syntactic,
+so dotted identifiers can still match.
+
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,
 while locally shadowed receivers can still contribute network endpoint
