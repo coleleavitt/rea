@@ -14,7 +14,6 @@ export const JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS = {
 /** Caller-selected artifact identity, separate from the decoded source-text digest. */
 export const javaScriptWorkerRequestSchema = z.strictObject({
   id: z.uuid(),
-  node_budget: z.number().int().min(0).max(20_000),
   text_sha256: digestSchema,
   file: z.strictObject({
     path: z.string(),
@@ -31,6 +30,8 @@ export const javaScriptWorkerRequestSchema = z.strictObject({
 export const javaScriptWorkerAdmissionSchema = z.strictObject({
   id: z.uuid(),
   semantic_result_budget_bytes: z.number().int().nonnegative(),
+  /** Serialized semantic-fact bytes this source may add to the Evidence. */
+  semantic_graph_bytes: z.number().int().nonnegative(),
 });
 
 const identity = { id: z.uuid() };

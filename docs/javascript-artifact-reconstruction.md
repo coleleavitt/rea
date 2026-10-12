@@ -131,7 +131,24 @@ After projection, it retains only the lexical module facts and exported return
 shapes needed to build application relationships. Full source IR does not stay
 resident for every file together. Callable ownership and contained-reference
 queries use per-file range indexes, while call sites use exact-range lookups.
-Existing node budgets and coverage reporting remain in effect.
+
+Semantic facts are bounded by serialized bytes, not node counts. One
+application Evidence may occupy the running heap divided by twelve, at most
+one V8 string: a consumer such as `compare_application_versions` holds two
+records, and measured consumers peak at about six times the Evidence bytes.
+Each source is offered the remaining budget in proportion to its share of the
+unanalyzed source bytes, also capped by the parent's free result heap. Within
+a source, nodes enter the graph when an admitted relation, fingerprint, or
+unknown frontier references them; relations are offered in projection order,
+then fingerprints, unknown frontiers, and unreferenced nodes. The first
+refusal closes that source, which keeps a connected source-ordered prefix.
+
+`semantic_graph.coverage.files` reports each source's status (`complete`,
+`truncated`, or `unavailable`), its byte budget, retained bytes, exact omitted
+node, relation, and fingerprint counts, and exact unknown-frontier totals by
+family and reason. Families report retained and omitted unknown counts. Page
+`semantic_files` or `semantic_unknowns` with `inspect_analysis_view`, or select
+one source with `source_paths` to give it the whole budget.
 
 Progress identifies the source file being parsed and projected. Cancellation is
 checked between files and throughout result transfer. The owned analyzer can

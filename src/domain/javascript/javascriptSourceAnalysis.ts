@@ -1,6 +1,7 @@
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { Result } from "../result.js";
+import type { ApplicationCoverage } from "./javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptArtifactFile } from "./javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "./javascriptModuleSemanticIr.js";
@@ -33,8 +34,9 @@ export interface JavaScriptSourceAnalysisLimits {
 export interface JavaScriptSourceAnalysisPort {
   analyze(
     file: JavaScriptArtifactFile,
-    nodeBudget: number,
     signal?: AbortSignal,
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
+  /** Limits that offered each analyzed source its semantic-fact byte budget. */
+  coverageLimits(): ApplicationCoverage["limits"];
   close(): Promise<void>;
 }
