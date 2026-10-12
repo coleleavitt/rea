@@ -1,8 +1,16 @@
 import * as t from "@babel/types";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  foldSemanticOperands,
+  isSemanticOperands,
+  isSemanticOperatorExpression,
+  type JavaScriptSemanticOperand,
+  type SemanticOperandFailure,
+} from "./javascriptSemanticOperators.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
@@ -206,7 +214,9 @@ export class JavaScriptSymbolicBindings {
       ) {
         return symbolicUnknown("overwritten Electron API member");
       }
-      return { kind: "external", path };
+      return value.identity === undefined
+        ? { kind: "external", path }
+        : { kind: "external", path, identity: value.identity };
     }
     if (value.kind === "record")
       return value.values.get(key) ?? symbolicUnknown("missing property");
@@ -405,13 +415,8 @@ export class JavaScriptSymbolicBindings {
   }
 
   #evaluate(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
-    if (
-      t.isStringLiteral(node) ||
-      t.isNumericLiteral(node) ||
-      t.isBooleanLiteral(node)
-    )
-      return { kind: "literal", value: node.value };
-    if (t.isNullLiteral(node)) return { kind: "literal", value: null };
+    const literal = readExactJavaScriptLiteral(node);
+    if (literal.found) return { kind: "literal", value: literal.value };
     if (t.isFunction(node))
       return { kind: "function", node, environment: env, origins: [] };
     if (t.isObjectExpression(node))
@@ -427,14 +432,20 @@ export class JavaScriptSymbolicBindings {
       return this.evaluate(node.expressions.at(-1), env);
     if (t.isAssignmentExpression(node)) return this.evaluate(node.right, env);
     if (t.isAwaitExpression(node)) return this.evaluate(node.argument, env);
-    if (t.isUnaryExpression(node)) {
-      const value = this.evaluate(node.argument, env);
-      if (node.operator === "void")
-        return { kind: "literal", value: undefined };
-      const truth = symbolicTruth(value);
-      if (node.operator === "!" && truth !== undefined)
-        return { kind: "literal", value: !truth };
+    // Negation reads truthiness, which objects and functions also have.
+    if (t.isUnaryExpression(node, { operator: "!" })) {
+      const truth = symbolicTruth(this.evaluate(node.argument, env));
+      return truth === undefined
+        ? symbolicUnknown("unresolved negation")
+        : { kind: "literal", value: !truth };
     }
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+      const called = this.#call(node, env);
+      return called.kind === "unknown" && isSemanticOperatorExpression(node)
+        ? this.#fold(node, env)
+        : called;
+    }
+    if (isSemanticOperatorExpression(node)) return this.#fold(node, env);
     if (t.isConditionalExpression(node)) {
       const truth = symbolicTruth(this.evaluate(node.test, env));
       return truth === undefined
@@ -478,9 +489,70 @@ export class JavaScriptSymbolicBindings {
         symbolicCondition(this.evaluate(node.right, env), rightCondition),
       ]);
     }
-    if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
-      return this.#call(node, env);
     return symbolicUnknown(`unsupported ${node.type}`);
+  }
+
+  /**
+   * Fold primitive operators with the constant lattice's operator semantics,
+   * reading operands from this environment. Operand predicates carry over to
+   * the result; predicates that differ between alternatives cannot be
+   * attributed to one folded result and mark it unresolved.
+   */
+  #fold(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
+    const conditions: SymbolicCondition[] = [];
+    let conditionUnresolved = false;
+    const operands = (
+      value: SymbolicValue,
+    ): readonly JavaScriptSemanticOperand[] | SemanticOperandFailure => {
+      const variants = symbolicVariants(value);
+      const values: JavaScriptSemanticOperand[] = [];
+      for (const variant of variants) {
+        if (variant.kind !== "literal")
+          return {
+            status: "unknown",
+            reason:
+              variant.kind === "unknown"
+                ? variant.reason
+                : `${variant.kind} value is not a primitive`,
+          };
+        values.push(variant.value);
+        if (variant.conditionUnresolved) conditionUnresolved = true;
+      }
+      if (variants.length === 1) conditions.push(...(value.conditions ?? []));
+      else if (variants.some((variant) => variant.conditions?.length))
+        conditionUnresolved = true;
+      return values;
+    };
+    const folded = foldSemanticOperands(
+      node,
+      {
+        state: this.state,
+        operands: (leaf) => operands(this.evaluate(leaf, env)),
+        arrayItems: (leaf) => {
+          const array = this.evaluate(leaf, env);
+          if (array.kind !== "array")
+            return {
+              status: "unknown",
+              reason: "Join receiver is not an exact array.",
+            };
+          const items: (readonly JavaScriptSemanticOperand[])[] = [];
+          for (const item of array.values) {
+            const values = operands(item);
+            if (!isSemanticOperands(values)) return values;
+            items.push(values);
+          }
+          return items;
+        },
+      },
+      0,
+    );
+    if (!isSemanticOperands(folded)) return symbolicUnknown(folded.reason);
+    let result = symbolicUnion(
+      folded.map((value) => ({ kind: "literal" as const, value })),
+    );
+    for (const condition of conditions)
+      result = symbolicCondition(result, condition);
+    return conditionUnresolved ? symbolicConditionsUnresolved(result) : result;
   }
 
   #identifier(node: t.Identifier, env: SymbolicEnvironment): SymbolicValue {
@@ -512,7 +584,11 @@ export class JavaScriptSymbolicBindings {
     const initializer =
       binding.initializers.length === 1 ? binding.initializers[0] : undefined;
     if (!initializer)
-      return symbolicUnknown("missing or ambiguous initializer");
+      return (
+        (binding.initializers.length === 0
+          ? this.#electronApi(node)
+          : undefined) ?? symbolicUnknown("missing or ambiguous initializer")
+      );
     const point = this.#initializerReadPoint(binding.scopeId, env, node);
     if (
       !initializer.entryBody &&
@@ -532,6 +608,30 @@ export class JavaScriptSymbolicBindings {
       value = this.property(value, String(key));
     }
     return value;
+  }
+
+  /**
+   * Electron identity of an import or unbound parameter read, owned by the
+   * shared identity index. An import keeps its module binding. A parameter
+   * the walk did not bind at a call site uses the wrapper-parameter or
+   * local-alternatives inference over its function's direct call sites, which
+   * the index records only for call roots.
+   */
+  #electronApi(node: t.Identifier): SymbolicValue | undefined {
+    const exported = this.#electronIdentity.exportPath(node);
+    if (exported !== undefined)
+      return { kind: "external", path: ["electron", ...exported] };
+    const callee = this.#electronIdentity.callees.get(node.start ?? -1);
+    if (callee === undefined || callee.identity.basis === "module-binding")
+      return undefined;
+    return {
+      kind: "external",
+      path: [
+        "electron",
+        ...callee.path.slice(0, callee.path.length - callee.consumed_members),
+      ],
+      identity: callee.identity,
+    };
   }
 
   #initializerReadPoint(
@@ -633,12 +733,15 @@ export class JavaScriptSymbolicBindings {
     env: SymbolicEnvironment,
   ): SymbolicValue {
     const callee = this.evaluate(node.callee, env);
-    const args = this.arguments(node, env);
+    // Arguments are read only for callees that consume them, so reads in
+    // calls of unresolved callees do not mark the substitution unresolved.
+    let args: readonly SymbolicValue[] | undefined;
+    const callArguments = () => (args ??= this.arguments(node, env));
     return symbolicUnion(
       symbolicVariants(callee).map((value) => {
         let result: SymbolicValue;
         if (value.kind === "loader") {
-          const key = args[0];
+          const key = callArguments()[0];
           const loaded =
             key?.kind === "literal"
               ? (value.modules.get(String(key.value)) ??
@@ -661,7 +764,7 @@ export class JavaScriptSymbolicBindings {
           value.kind === "external" &&
           value.path.join(".") === "require"
         ) {
-          const spec = args[0];
+          const spec = callArguments()[0];
           result =
             spec?.kind === "literal" && typeof spec.value === "string"
               ? { kind: "external", path: [spec.value] }
@@ -672,9 +775,10 @@ export class JavaScriptSymbolicBindings {
         ) {
           result = symbolicUnknown("unresolved or recursive call");
         } else {
+          const actual = callArguments();
           this.#activeFunctions.add(value.node);
           try {
-            const bound = this.bind(value, args, node);
+            const bound = this.bind(value, actual, node);
             const returned = t.isBlockStatement(value.node.body)
               ? this.#returns(value.node.body.body, bound)
               : this.evaluate(value.node.body, bound);

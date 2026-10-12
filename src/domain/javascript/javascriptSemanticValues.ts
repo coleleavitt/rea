@@ -20,7 +20,6 @@ import type {
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
@@ -28,12 +27,13 @@ import {
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
-  applySemanticBinaryOperator,
-  applySemanticUnaryOperator,
-  isFoldableSemanticBinaryOperator,
-  semanticJoinText,
+  foldSemanticOperands,
+  isSemanticOperands,
+  isSemanticOperatorExpression,
+  semanticOperandFailure,
   semanticOperandValue,
   type JavaScriptSemanticOperand,
+  type SemanticOperandLeaves,
 } from "./javascriptSemanticOperators.js";
 import {
   readExactJavaScriptLiteral,
@@ -53,9 +53,6 @@ import {
 } from "./javascriptSemanticPrimitives.js";
 import {
   SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
-  exceedsSemanticPrimitiveAdditionByteBudget,
-  exceedsSemanticTemplateByteBudget,
   semanticResourceLimitUnknown,
   semanticResourceLimitReason,
 } from "./javascriptSemanticResourceLimits.js";
@@ -285,7 +282,6 @@ const evaluateExpression = (
       ? { status: "unknown", reason: `Unbound identifier ${node.name}.` }
       : evaluateBinding(binding, nestedContext(context));
   }
-  if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
   if (t.isConditionalExpression(node))
     return mergeValues([
       evaluateExpression(node.consequent, nestedContext(context)),
@@ -300,324 +296,60 @@ const evaluateExpression = (
   if (t.isArrayExpression(node)) return evaluateArray(node, context);
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
     return evaluateMember(node, context);
-  if (
-    t.isUnaryExpression(node) ||
-    t.isCallExpression(node) ||
-    (t.isBinaryExpression(node) &&
-      isFoldableSemanticBinaryOperator(node.operator))
-  ) {
-    const operands = evaluateOperands(node, context);
-    return isOperands(operands) ? semanticOperandValue(operands) : operands;
+  if (isSemanticOperatorExpression(node)) {
+    const operands = foldSemanticOperands(
+      node,
+      operandLeaves(context),
+      context.expressionDepth,
+    );
+    return isSemanticOperands(operands)
+      ? semanticOperandValue(operands)
+      : operands;
   }
   return { status: "unknown", reason: `Unsupported ${node.type} value.` };
 };
 
-type OperandFailure = Extract<
-  JavaScriptSemanticValue,
-  { readonly status: "unknown" | "ambiguous" | "cycle" }
->;
-
-type OperandResult = readonly JavaScriptSemanticOperand[] | OperandFailure;
-
-const isOperands = (
-  result: OperandResult,
-): result is readonly JavaScriptSemanticOperand[] => Array.isArray(result);
-
-const operandFailure = (
-  value: JavaScriptSemanticValue,
-  reason: string,
-): OperandFailure =>
-  value.status === "unknown" ||
-  value.status === "ambiguous" ||
-  value.status === "cycle"
-    ? value
-    : { status: "unknown", reason };
-
-/** Exact primitive candidates, including values JSON evidence cannot carry. */
-const evaluateOperands = (
-  node: t.Node,
-  context: EvaluationContext,
-): OperandResult => {
-  if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT)
-    return semanticResourceLimitUnknown("expression-depth");
-  const unwrapped = unwrapJavaScriptExpression(node);
-  if (unwrapped.depth > 0) {
-    if (
-      context.expressionDepth + unwrapped.depth >
-      SEMANTIC_EXPRESSION_DEPTH_LIMIT
-    )
-      return semanticResourceLimitUnknown("expression-depth");
-    return evaluateOperands(unwrapped.node, {
+/** Lattice leaves of the shared operator folder. */
+const operandLeaves = (context: EvaluationContext): SemanticOperandLeaves => ({
+  state: context.state,
+  operands: (node, depth) => {
+    const value = evaluateExpression(node, {
       ...context,
-      expressionDepth: context.expressionDepth + unwrapped.depth,
+      expressionDepth: depth,
     });
-  }
-  if (
-    t.isBinaryExpression(node) &&
-    isFoldableSemanticBinaryOperator(node.operator)
-  )
-    return evaluateBinaryOperands(node, context);
-  if (t.isUnaryExpression(node)) return evaluateUnaryOperands(node, context);
-  if (t.isCallExpression(node)) return evaluateCallOperands(node, context);
-  if (t.isIdentifier(node) && GLOBAL_CONSTANTS.has(node.name)) {
-    if (isUnshadowedGlobal(node, context.state, node.name))
-      return [globalConstant(node.name)];
-  }
-  const value = evaluateExpression(node, context);
-  return (
-    primitiveCandidates(value) ??
-    operandFailure(value, "Operand is not a bounded primitive.")
-  );
-};
-
-const GLOBAL_CONSTANTS = new Set(["undefined", "NaN", "Infinity"]);
-
-const globalConstant = (name: string): JavaScriptSemanticOperand =>
-  name === "NaN" ? Number.NaN : name === "Infinity" ? Infinity : undefined;
-
-const evaluateBinaryOperands = (
-  node: t.BinaryExpression,
-  context: EvaluationContext,
-): OperandResult => {
-  // Minified concatenations nest thousands deep on the left; walk iteratively.
-  const pending: {
-    readonly node: t.BinaryExpression;
-    left: readonly JavaScriptSemanticOperand[] | undefined;
-  }[] = [];
-  let current: t.Node = node;
-  for (;;) {
-    if (
-      t.isBinaryExpression(current) &&
-      isFoldableSemanticBinaryOperator(current.operator)
-    ) {
-      pending.push({ node: current, left: undefined });
-      current = current.left;
-      continue;
-    }
-    let result = evaluateOperands(current, nestedContext(context));
-    for (;;) {
-      if (!isOperands(result)) return result;
-      const parent = pending.at(-1);
-      if (parent === undefined) return result;
-      if (parent.left === undefined) {
-        parent.left = result;
-        current = parent.node.right;
-        break;
-      }
-      result = combineOperands(parent.node.operator, parent.left, result);
-      pending.pop();
-    }
-  }
-};
-
-const combineOperands = (
-  operator: string,
-  left: readonly JavaScriptSemanticOperand[],
-  right: readonly JavaScriptSemanticOperand[],
-): OperandResult => {
-  if (left.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / right.length)
-    return semanticResourceLimitUnknown("primitive-candidates");
-  if (
-    operator === "+" &&
-    exceedsSemanticPrimitiveAdditionByteBudget(left, right)
-  )
-    return semanticResourceLimitUnknown("primitive-bytes");
-  return uniqueOperands(
-    left.flatMap((leftValue) =>
-      right.map((rightValue) =>
-        applySemanticBinaryOperator(operator, leftValue, rightValue),
-      ),
-    ),
-  );
-};
-
-const evaluateUnaryOperands = (
-  node: t.UnaryExpression,
-  context: EvaluationContext,
-): OperandResult => {
-  const argument = evaluateOperands(node.argument, nestedContext(context));
-  if (!isOperands(argument)) return argument;
-  const values: JavaScriptSemanticOperand[] = [];
-  for (const value of argument) {
-    const applied = applySemanticUnaryOperator(node.operator, value);
-    if (applied === undefined)
-      return {
-        status: "unknown",
-        reason: `Unsupported unary ${node.operator}.`,
-      };
-    values.push(applied.value);
-  }
-  return uniqueOperands(values);
-};
-
-/** Fold `String.fromCharCode` and `Array.prototype.join` over exact values. */
-const evaluateCallOperands = (
-  node: t.CallExpression,
-  context: EvaluationContext,
-): OperandResult => {
-  const unsupported: OperandResult = {
-    status: "unknown",
-    reason: "Unsupported CallExpression value.",
-  };
-  const callee = unwrapJavaScriptExpression(node.callee).node;
-  if (
-    !t.isMemberExpression(callee) ||
-    node.arguments.some((argument) => !t.isExpression(argument))
-  )
-    return unsupported;
-  const method = semanticStaticPropertyKey(callee.property, callee.computed);
-  const receiver = unwrapJavaScriptExpression(callee.object).node;
-  if (
-    method === "fromCharCode" &&
-    isUnshadowedGlobal(receiver, context.state, "String")
-  )
-    return evaluateCharacterCodes(node.arguments, context);
-  if (method === "join" && node.arguments.length <= 1)
-    return evaluateJoin(receiver, node.arguments[0], context);
-  return unsupported;
-};
-
-const evaluateCharacterCodes = (
-  codes: t.CallExpression["arguments"],
-  context: EvaluationContext,
-): OperandResult => {
-  let candidates = [""];
-  for (const code of codes) {
-    const values = evaluateOperands(code, nestedContext(context));
-    if (!isOperands(values)) return values;
-    if (candidates.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / values.length)
-      return semanticResourceLimitUnknown("primitive-candidates");
-    const suffixes = values.map((value) => String.fromCharCode(Number(value)));
-    candidates = candidates.flatMap((prefix) =>
-      suffixes.map((suffix) => `${prefix}${suffix}`),
+    return (
+      primitiveCandidates(value) ??
+      semanticOperandFailure(value, "Operand is not a bounded primitive.")
     );
-  }
-  return uniqueOperands(candidates);
-};
-
-/** Element texts of an exact array; literal elements may be `undefined`. */
-const joinItems = (
-  receiver: t.Node,
-  context: EvaluationContext,
-): (readonly string[])[] | OperandFailure => {
-  const items: (readonly string[])[] = [];
-  if (t.isArrayExpression(receiver)) {
-    for (const element of receiver.elements) {
-      if (element === null) {
-        items.push([""]);
+  },
+  arrayItems: (node, depth) => {
+    const array = evaluateExpression(node, {
+      ...context,
+      expressionDepth: depth,
+    });
+    if (array.status !== "array" || array.unknownItems)
+      return semanticOperandFailure(
+        array,
+        "Join receiver is not an exact array.",
+      );
+    const items: (readonly JavaScriptSemanticOperand[])[] = [];
+    for (const item of array.items) {
+      if (item.presence === "absent") {
+        items.push([undefined]);
         continue;
       }
-      if (t.isSpreadElement(element))
-        return { status: "unknown", reason: "Join receiver has a spread." };
-      const values = evaluateOperands(element, nestedContext(context));
-      if (!isOperands(values)) return values;
-      items.push(values.map(semanticJoinText));
+      const values =
+        item.presence === "present" ? primitiveCandidates(item.value) : null;
+      if (values === null)
+        return semanticOperandFailure(
+          item.value,
+          "Join item is not a bounded primitive.",
+        );
+      items.push(values);
     }
     return items;
-  }
-  const array = evaluateExpression(receiver, nestedContext(context));
-  if (array.status !== "array" || array.unknownItems)
-    return operandFailure(array, "Join receiver is not an exact array.");
-  for (const item of array.items) {
-    if (item.presence === "absent") {
-      items.push([""]);
-      continue;
-    }
-    const values =
-      item.presence === "present" ? primitiveCandidates(item.value) : null;
-    if (values === null)
-      return operandFailure(
-        item.value,
-        "Join item is not a bounded primitive.",
-      );
-    items.push(values.map(semanticJoinText));
-  }
-  return items;
-};
-
-const evaluateJoin = (
-  receiver: t.Node,
-  separatorNode: t.CallExpression["arguments"][number] | undefined,
-  context: EvaluationContext,
-): OperandResult => {
-  const items = joinItems(receiver, context);
-  if (!Array.isArray(items)) return items;
-  const separators =
-    separatorNode === undefined
-      ? [","]
-      : evaluateOperands(separatorNode, nestedContext(context));
-  if (!isOperands(separators)) return separators;
-  const joined: string[] = [];
-  for (const separator of separators) {
-    const text = separator === undefined ? "," : String(separator);
-    let candidates = [""];
-    for (const [index, values] of items.entries()) {
-      const suffixes =
-        index === 0 ? values : values.map((value) => `${text}${value}`);
-      if (
-        candidates.length * joined.length >
-          SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT ||
-        candidates.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / suffixes.length
-      )
-        return semanticResourceLimitUnknown("primitive-candidates");
-      if (exceedsSemanticTemplateByteBudget(candidates, suffixes))
-        return semanticResourceLimitUnknown("primitive-bytes");
-      candidates = candidates.flatMap((prefix) =>
-        suffixes.map((suffix) => `${prefix}${suffix}`),
-      );
-    }
-    joined.push(...candidates);
-  }
-  return uniqueOperands(joined);
-};
-
-const uniqueOperands = (
-  values: readonly JavaScriptSemanticOperand[],
-): readonly JavaScriptSemanticOperand[] => {
-  const unique: JavaScriptSemanticOperand[] = [];
-  for (const value of values)
-    if (!unique.some((existing) => Object.is(existing, value)))
-      unique.push(value);
-  return unique;
-};
-
-const evaluateTemplate = (
-  node: t.TemplateLiteral,
-  context: EvaluationContext,
-): JavaScriptSemanticValue => {
-  let candidates = [""];
-  for (let index = 0; index < node.quasis.length; index += 1) {
-    const quasi = node.quasis[index];
-    const text = quasi?.value.cooked;
-    if (text === undefined || text === null)
-      return {
-        status: "unknown",
-        reason: "Template text has no cooked representation.",
-      };
-    if (exceedsSemanticTemplateByteBudget(candidates, [text]))
-      return semanticResourceLimitUnknown("primitive-bytes");
-    candidates = candidates.map((prefix) => `${prefix}${text}`);
-    const expression = node.expressions[index];
-    if (expression === undefined) continue;
-    const values = evaluateOperands(expression, nestedContext(context));
-    if (!isOperands(values)) {
-      if (isSemanticResourceLimit(values)) return values;
-      return {
-        status: "unknown",
-        reason: "Template expression is not a bounded primitive.",
-      };
-    }
-    if (candidates.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / values.length)
-      return semanticResourceLimitUnknown("primitive-candidates");
-    const suffixes = values.map((value) => String(value));
-    if (exceedsSemanticTemplateByteBudget(candidates, suffixes))
-      return semanticResourceLimitUnknown("primitive-bytes");
-    candidates = candidates.flatMap((prefix) =>
-      suffixes.map((suffix) => `${prefix}${suffix}`),
-    );
-  }
-  return primitiveSet(candidates);
-};
+  },
+});
 
 const evaluateObject = (
   node: t.ObjectExpression,

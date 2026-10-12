@@ -9,6 +9,7 @@ it.each([
   { expression: "!void 0", value: true },
   { expression: "typeof void 0", value: "undefined" },
   { expression: '"a" + void 0', value: "aundefined" },
+  { expression: '"a" + void runtimeValue()', value: "aundefined" },
   { expression: '"" + 1 / 0', value: "Infinity" },
   { expression: "-1 / 0 < 0", value: true },
   { expression: "2 ** 10 | 1", value: 1025 },
