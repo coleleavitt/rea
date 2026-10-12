@@ -51,6 +51,17 @@ import {
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import type { ElectronCalleeBinding } from "./electronStaticAnalysisTypes.js";
+import { createElectronWrapperParameters } from "./javascriptElectronWrapperParameters.js";
+import {
+  isContextBridgeExposure,
+  resolveElectronApiObjects,
+} from "./javascriptElectronApiObjects.js";
+import type {
+  JavaScriptElectronSemanticFacts,
+  JavaScriptNativeLoaderCall,
+} from "./javascriptStaticAnalysisState.js";
+import { createNativeLoaderClassifier } from "./javascriptNativeLoaders.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronExportPath,
@@ -393,20 +404,24 @@ const resolveGlobalAliasFact = (
 };
 
 /**
- * Proven Electron export path segments for call and construction roots, keyed by
- * root offset. Only proven Electron origins are present; callers must not
- * infer an Electron export from an absent entry or familiar local name.
+ * Classified Electron identities for call and construction roots, keyed by
+ * root offset, and the object literals bound to contextBridge API arguments.
+ * Only classified origins are present; callers must not infer an Electron
+ * export from an absent entry or familiar local name.
  */
 export const classifyParsedJavaScriptElectronBindings = (
   file: ParsedJavaScriptSource,
-): ReadonlyMap<number, readonly string[]> =>
+): JavaScriptElectronSemanticFacts =>
   completeSemanticSteps(classifyParsedJavaScriptElectronBindingsSteps(file));
 
 /** Resolve Electron aliases while yielding during lexical and AST scans. */
 export function* classifyParsedJavaScriptElectronBindingsSteps(
   file: ParsedJavaScriptSource,
-): Generator<void, ReadonlyMap<number, readonly string[]>> {
-  const facts = new Map<number, readonly string[]>();
+): Generator<void, JavaScriptElectronSemanticFacts> {
+  const facts = new Map<number, ElectronCalleeBinding>();
+  const exposures: (t.CallExpression | t.OptionalCallExpression)[] = [];
+  const loaders = new WeakMap<t.Node, JavaScriptNativeLoaderCall>();
+  const memberWritten = new Set<string>();
   const state = createState(file.program);
   yield* collectDefinitionsSteps(file.program, state);
   const interop = createSemanticModuleInterop(state);
@@ -442,6 +457,10 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
     file.program,
     (root, kind) => {
       if (kind === "opaque-call") return interop.opaqueMutationPath(root);
+      if (kind === "member" && t.isIdentifier(root)) {
+        const written = resolveSemanticBindingState(state, root, root.name);
+        if (written !== undefined) memberWritten.add(written.bindingId);
+      }
       const exported = kind === "binding" ? undefined : rootExport(root);
       return exported === undefined
         ? (interop.intrinsicPath(root) ??
@@ -459,6 +478,26 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
     },
   );
   collectedWrites = true;
+  const wrappers = createElectronWrapperParameters(state, rootExport);
+  const moduleOrigin = (node: t.Node): JavaScriptModuleOrigin | undefined => {
+    const { root, members } = electronMemberPath(node);
+    if (!members.every((member): member is string => member !== null))
+      return undefined;
+    let origin: JavaScriptModuleOrigin | undefined;
+    if (t.isIdentifier(root)) {
+      if (semanticResolutionBlocked(state, root, root.name)) return undefined;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (binding === undefined) return undefined;
+      origin = interop.origin(binding)?.origin ?? bindingOrigin(binding, state);
+    } else
+      origin =
+        interop.callOrigin(root)?.origin ??
+        semanticRequireOrigin(root, state)?.origin;
+    return origin === undefined
+      ? undefined
+      : { ...origin, importedPath: [...origin.importedPath, ...members] };
+  };
+  const nativeLoader = createNativeLoaderClassifier(state, moduleOrigin);
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
       if (
@@ -468,15 +507,38 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
       )
         return;
       const { root, members } = electronMemberPath(node.callee);
+      if (!t.isNewExpression(node)) {
+        if (isContextBridgeExposure(members.at(-1))) exposures.push(node);
+        const loader = nativeLoader(node);
+        if (loader !== undefined) loaders.set(node, loader);
+      }
       const exported = rootExport(root);
-      if (
-        exported !== undefined &&
-        !writes.covers(["electron", ...exported, ...members])
-      )
-        facts.set(root.start ?? -1, exported);
+      if (exported === undefined) {
+        wrappers.defer(root, members);
+        return;
+      }
+      if (!writes.covers(["electron", ...exported, ...members]))
+        facts.set(root.start ?? -1, {
+          path: exported,
+          consumed_members: 0,
+          identity: { basis: "module-binding" },
+        });
     },
   });
-  return facts;
+  yield* wrappers.collectCallSitesSteps(file.program);
+  for (const { root, binding } of wrappers.resolved())
+    if (!writes.covers(["electron", ...binding.path]))
+      facts.set(root.start ?? -1, binding);
+  return {
+    callees: facts,
+    apiObjects: resolveElectronApiObjects(
+      state,
+      exposures,
+      facts,
+      memberWritten,
+    ),
+    loaders,
+  };
 }
 
 // Read import and require origins directly; general value evaluation is

@@ -143,6 +143,7 @@ describe("inert JavaScript path resolution", () => {
         module_resolution_context: null,
         module_expression: expression,
         service_name: null,
+        electron_identity: { basis: "module-binding" },
         module_key: null,
         location: lineRange(3, 0, utilityExpression.length),
       },
@@ -245,6 +246,7 @@ const assertPathProjection = (
   );
   expect(analysis.electron.browser_windows).toEqual([
     {
+      api: "BrowserWindow",
       options_status: "object-literal",
       web_preferences_status: "object-literal",
       web_preferences: [
@@ -255,6 +257,7 @@ const assertPathProjection = (
       ],
       preload_path: path,
       preload_resolution_context: context,
+      electron_identity: { basis: "module-binding" },
       module_key: null,
       location: lineRange(2, 0, windowExpression.length),
     },
@@ -265,6 +268,7 @@ const assertPathProjection = (
       module_resolution_context: context,
       module_expression: null,
       service_name: null,
+      electron_identity: { basis: "module-binding" },
       module_key: null,
       location: lineRange(3, 0, utilityExpression.length),
     },

@@ -12,11 +12,14 @@ import type {
 } from "./javascriptStaticAnalysisTypes.js";
 import type {
   ElectronBrowserWindowFinding,
+  ElectronCalleeBinding,
   ElectronContextBridgeFinding,
   ElectronIpcFinding,
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
   ElectronUtilityProcessFinding,
+  ElectronWebviewAttachFinding,
+  ElectronContentSecurityPolicyFinding,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
 
@@ -49,6 +52,10 @@ export interface JavaScriptAnalysisAccumulator {
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
+  readonly webviewAttachments: LocatedJavaScriptFinding<ElectronWebviewAttachFinding>[];
+  readonly contentSecurityPolicies: LocatedJavaScriptFinding<ElectronContentSecurityPolicyFinding>[];
+  /** Nodes already reported as part of a policy. */
+  readonly policyNodes: WeakSet<t.Node>;
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** `preload` attributes of audio and video elements, which are not scripts. */
   readonly mediaElementPreloads: WeakSet<t.Node>;
@@ -57,6 +64,31 @@ export interface JavaScriptAnalysisAccumulator {
   readonly seen: Set<string>;
   visitedNodes: number;
   unknownFindings: number;
+}
+
+/** Object literal bound to an identifier in a contextBridge API argument. */
+export interface ElectronApiObject {
+  readonly object: t.ObjectExpression;
+  /** A visible member write or mutator call targets the bound object. */
+  readonly memberWrites: boolean;
+}
+
+/** A call that loads a module through a native or CommonJS loader. */
+export interface JavaScriptNativeLoaderCall {
+  readonly loader: NonNullable<ElectronNativeAddonBindingFinding["loader"]>;
+  /** How the callee was tied to the loader. */
+  readonly basis: NonNullable<
+    ElectronNativeAddonBindingFinding["loader_basis"]
+  >;
+}
+
+/** Electron facts recovered from lexical bindings before the finding scan. */
+export interface JavaScriptElectronSemanticFacts {
+  readonly callees: ReadonlyMap<number, ElectronCalleeBinding>;
+  /** Bound API objects by identifier offset. */
+  readonly apiObjects: ReadonlyMap<number, ElectronApiObject>;
+  /** Native and CommonJS loader calls; nested calls can share an offset. */
+  readonly loaders: WeakMap<t.Node, JavaScriptNativeLoaderCall>;
 }
 
 /** Shared source and accumulator for helper inspections. */
@@ -75,8 +107,8 @@ export interface JavaScriptFindingContext {
     | "local-indexed-db"
     | "local-cache-storage"
   >;
-  /** Proven Electron export path segments by root offset. */
-  readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
+  /** Classified Electron callee identities and bound bridge API objects. */
+  readonly electron?: JavaScriptElectronSemanticFacts;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */
@@ -121,6 +153,9 @@ export const createJavaScriptAnalysisAccumulator = (
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],
+  webviewAttachments: [],
+  contentSecurityPolicies: [],
+  policyNodes: new WeakSet(),
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   mediaElementPreloads: new WeakSet(),
   consumedValueNodes: new WeakSet(),

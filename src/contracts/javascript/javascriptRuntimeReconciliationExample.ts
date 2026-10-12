@@ -141,6 +141,8 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
       semantic_graph: semanticGraph,
       summary: {
         browser_windows: 0,
+        web_contents_views: 0,
+        webview_attach_handlers: 0,
         explicit_web_preferences: 0,
         preload_entrypoints: 0,
         context_bridge_apis: 0,
@@ -161,6 +163,9 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
         resolved_utility_entrypoints: 0,
         native_addon_bindings: 0,
         resolved_native_addon_bindings: 0,
+        inferred_api_identity_findings: 0,
+        content_security_policies: 0,
+        content_security_policy_concerns: 0,
       },
       statistics: {
         relevant_files: 1,

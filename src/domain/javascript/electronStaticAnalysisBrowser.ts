@@ -12,7 +12,7 @@ import type {
 import {
   boundedExpression,
   collectContextBridgeMembers,
-  electronCalleePath,
+  electronCallee,
   electronStaticValue,
   objectProperty,
 } from "./electronStaticAnalysisValues.js";
@@ -42,12 +42,20 @@ const inspectBrowserWindow = (
   node: t.NewExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const path = electronCalleePath(node.callee, context);
-  if (path?.length !== 1 || path[0] !== "BrowserWindow") return;
+  const callee = electronCallee(node.callee, context);
+  const api = callee?.path.length === 1 ? callee.path[0] : undefined;
+  if (
+    callee === undefined ||
+    (api !== "BrowserWindow" &&
+      api !== "BrowserView" &&
+      api !== "WebContentsView")
+  )
+    return;
   const options = argumentNode(node.arguments[0]);
   const collected = collectWindowOptions(context, options);
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    api,
     options_status:
       options === undefined
         ? "missing"
@@ -57,12 +65,13 @@ const inspectBrowserWindow = (
     web_preferences_status: collected.status,
     web_preferences: collected.preferences,
     ...collected.preload,
+    electron_identity: callee.identity,
     module_key: null,
     location: range(node),
   };
   addLocatedFinding(context, {
     collection: context.accumulator.browserWindows,
-    key: "electron-window\0BrowserWindow",
+    key: `electron-window\0${api}`,
     node,
     value: finding,
   });
@@ -165,16 +174,21 @@ const inspectContextBridge = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const path = electronCalleePath(node.callee, context);
+  const callee = electronCallee(node.callee, context);
   const exposureMethod =
-    path?.length === 2 && path[0] === "contextBridge" ? path[1] : undefined;
+    callee?.path.length === 2 && callee.path[0] === "contextBridge"
+      ? callee.path[1]
+      : undefined;
   const main = exposureMethod === "exposeInMainWorld";
   const isolated = exposureMethod === "exposeInIsolatedWorld";
-  if (!main && !isolated) return;
+  if (callee === undefined || (!main && !isolated)) return;
   const keyNode = argumentNode(node.arguments[isolated ? 1 : 0]);
   const apiNode = argumentNode(node.arguments[isolated ? 2 : 1]);
   const key = electronStaticValue(context, keyNode);
-  const api = collectContextBridgeMembers(apiNode);
+  const api = collectContextBridgeMembers(
+    apiNode,
+    context.electron?.apiObjects,
+  );
   const worldId = isolated
     ? electronStaticValue(context, argumentNode(node.arguments[0]))
     : null;
@@ -197,7 +211,9 @@ const inspectContextBridge = (
     world_id: worldId,
     api_status: api.status,
     members: api.members,
+    conditional_members: api.conditional_members,
     unknown_members: api.unknown,
+    electron_identity: callee.identity,
     module_key: null,
     location: range(node),
   };
@@ -213,8 +229,12 @@ const inspectUtilityProcess = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const path = electronCalleePath(node.callee, context);
-  if (path?.length !== 2 || path[0] !== "utilityProcess" || path[1] !== "fork")
+  const callee = electronCallee(node.callee, context);
+  if (
+    callee?.path.length !== 2 ||
+    callee.path[0] !== "utilityProcess" ||
+    callee.path[1] !== "fork"
+  )
     return;
   const moduleNode = argumentNode(node.arguments[0]);
   const modulePath =
@@ -243,6 +263,7 @@ const inspectUtilityProcess = (
   const finding: ElectronUtilityProcessFinding = {
     ...moduleReference,
     service_name: serviceName ?? null,
+    electron_identity: callee.identity,
     module_key: null,
     location: range(node),
   };

@@ -83,8 +83,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
-  const electronBindings =
-    yield* classifyParsedJavaScriptElectronBindingsSteps(file);
+  const electron = yield* classifyParsedJavaScriptElectronBindingsSteps(file);
   const clientRoots = yield* classifyParsedJavaScriptRpcClientRootsSteps(file);
   const evaluation = yield* createParsedJavaScriptValueEvaluatorSteps(file);
   yield* traverseStaticSourceSteps(file, {
@@ -94,7 +93,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     ),
     accumulator,
     ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
-    electronBindings,
+    electron,
     rpcScan: createJavaScriptRpcScan(source, clientRoots),
   });
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
@@ -200,6 +199,14 @@ const finalizeStaticAnalysis = (
       ),
       native_addon_bindings: finalizeLocatedFindings(
         accumulator.nativeAddonBindings,
+        accumulator.moduleRangeIndex,
+      ),
+      webview_attachments: finalizeLocatedFindings(
+        accumulator.webviewAttachments,
+        accumulator.moduleRangeIndex,
+      ),
+      content_security_policies: finalizeLocatedFindings(
+        accumulator.contentSecurityPolicies,
         accumulator.moduleRangeIndex,
       ),
     },

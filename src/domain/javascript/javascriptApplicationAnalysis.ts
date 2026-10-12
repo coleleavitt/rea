@@ -35,6 +35,8 @@ export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
 /** Compact counts for the high-level Electron architecture/security surface. */
 const electronBoundarySummarySchema = z.strictObject({
   browser_windows: countSchema,
+  web_contents_views: countSchema,
+  webview_attach_handlers: countSchema,
   explicit_web_preferences: countSchema,
   preload_entrypoints: countSchema,
   context_bridge_apis: countSchema,
@@ -55,6 +57,9 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_utility_entrypoints: countSchema,
   native_addon_bindings: countSchema,
   resolved_native_addon_bindings: countSchema,
+  inferred_api_identity_findings: countSchema,
+  content_security_policies: countSchema,
+  content_security_policy_concerns: countSchema,
 });
 
 const reconstructionStatisticsSchema = z.strictObject({

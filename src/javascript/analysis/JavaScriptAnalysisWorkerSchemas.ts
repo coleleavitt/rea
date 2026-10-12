@@ -50,6 +50,31 @@ const staticValue = z.discriminatedUnion("status", [
     expression: z.string(),
   }),
 ]);
+const electronIdentity = z.discriminatedUnion("basis", [
+  z.strictObject({ basis: z.literal("module-binding") }),
+  z.strictObject({
+    basis: z.literal("wrapper-parameter"),
+    function_name: z.string(),
+    parameter: z.string(),
+    parameter_index: count,
+    function_location: range,
+    call_sites: count,
+    call_sites_complete: z.boolean(),
+    electron_argument_locations: z.array(range),
+    unresolved_arguments: count,
+  }),
+  z.strictObject({
+    basis: z.literal("local-alternatives"),
+    binding: z.string(),
+    initializer_location: range,
+    electron_value_locations: z.array(range),
+    unresolved_values: count,
+  }),
+]);
+const electronFindingContext = {
+  ...findingContext,
+  electron_identity: electronIdentity,
+};
 const nullHandler = { handler_kind: z.null(), handler_location: z.null() };
 const missingHandler = {
   handler_kind: z.literal("missing"),
@@ -67,19 +92,19 @@ const locatedHandler = {
 const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
       ...shape,
       channel: z.string(),
       channel_expression: z.null(),
     }),
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
       ...shape,
       channel: z.string(),
       channel_expression: z.string(),
     }),
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
       ...shape,
       channel: z.null(),
       channel_expression: z.string(),
@@ -132,7 +157,8 @@ const ipc = z
     };
   });
 const windowShape = {
-  ...findingContext,
+  ...electronFindingContext,
+  api: z.enum(["BrowserWindow", "BrowserView", "WebContentsView"]),
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
@@ -140,14 +166,23 @@ const windowShape = {
   ),
 };
 const bridgeShape = {
-  ...findingContext,
+  ...electronFindingContext,
   world: z.enum(["main", "isolated"]),
   world_id: staticValue.nullable(),
-  api_status: z.enum(["object-literal", "dynamic", "missing"]),
+  api_status: z.enum([
+    "object-literal",
+    "object-binding",
+    "dynamic",
+    "missing",
+  ]),
   members: strings,
+  conditional_members: strings,
   unknown_members: count,
 };
-const utilityShape = { ...findingContext, service_name: z.string().nullable() };
+const utilityShape = {
+  ...electronFindingContext,
+  service_name: z.string().nullable(),
+};
 const electron = z.strictObject({
   browser_windows: z.array(
     z.union([
@@ -240,12 +275,77 @@ const electron = z.strictObject({
     z.strictObject({
       ...findingContext,
       specifier: z.string(),
-      binding_kind: z.enum(["import", "require", "re-export"]),
+      specifier_status: z.enum(["literal", "dynamic"]),
+      binding_kind: z.enum(["import", "require", "re-export", "loader"]),
+      loader: z
+        .enum([
+          "create-require",
+          "bindings",
+          "node-gyp-build",
+          "process-dlopen",
+        ])
+        .nullable(),
+      loader_basis: z.enum(["direct", "alias", "parameter-default"]).nullable(),
       module_kind: z.enum(["import", "require"]),
       members: strings,
       namespace_access: z.boolean().optional(),
       dynamic_member_access: z.boolean().optional(),
     }),
+  ),
+  webview_attachments: z.array(
+    z
+      .strictObject({
+        ...findingContext,
+        handler_kind: z.enum([
+          "inline-function",
+          "identifier",
+          "member-expression",
+          "dynamic-expression",
+          "missing",
+        ]),
+        handler_location: range.nullable(),
+        writes: z.array(
+          z.strictObject({
+            target: z.enum(["web-preferences", "params"]),
+            name: z.string(),
+            operation: z.enum(["assign", "delete"]),
+            value: staticValue.nullable(),
+            location: range,
+          }),
+        ),
+        preload_path: z.string().nullable(),
+        preload_resolution_context: pathContext.nullable(),
+        unknown_writes: count,
+      })
+      .transform(withRuntime),
+  ),
+  content_security_policies: z.array(
+    z
+      .strictObject({
+        ...findingContext,
+        mechanism: z.enum([
+          "header-property",
+          "directive-list",
+          "string-literal",
+          "html-meta-string",
+          "html-meta",
+        ]),
+        header: z.string().nullable(),
+        policy: z.string().nullable(),
+        policy_expression: z.string().nullable(),
+        directives: z.array(
+          z.strictObject({ name: z.string(), sources: strings }),
+        ),
+        concerns: z.array(
+          z.strictObject({
+            directive: z.string(),
+            source: z.string().nullable(),
+            reason: z.string(),
+          }),
+        ),
+        dynamic_parts: count,
+      })
+      .transform(withRuntime),
   ),
 });
 const referenceShape = {

@@ -1,3 +1,5 @@
+import { parseContentSecurityPolicy } from "../../domain/javascript/contentSecurityPolicy.js";
+import { electronStaticFindingCount } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
@@ -30,6 +32,7 @@ import type {
   JavaScriptArtifactAnalysis,
   JavaScriptModuleArtifactAnalysis,
   JavaScriptModuleSemanticIr,
+  JavaScriptHtmlPolicyObservation,
   JavaScriptHtmlScriptObservation,
   JavaScriptJsonModuleObservation,
   JavaScriptPackageObservation,
@@ -56,6 +59,7 @@ interface MutableArtifactAnalysis<
   readonly packages: JavaScriptPackageObservation[];
   readonly jsonModules: JavaScriptJsonModuleObservation[];
   readonly htmlScripts: JavaScriptHtmlScriptObservation[];
+  readonly htmlPolicies: JavaScriptHtmlPolicyObservation[];
   readonly sourceMaps: JavaScriptSourceMapObservation[];
   visitedNodes: number;
   findings: number;
@@ -323,9 +327,11 @@ const finalizeArtifactAnalysis = <
     packages: state.packages,
     json_modules: state.jsonModules,
     html_scripts: state.htmlScripts,
+    html_policies: state.htmlPolicies,
     source_maps: state.sourceMaps,
     visited_ast_nodes: state.visitedNodes,
-    findings: state.findings + state.htmlScripts.length,
+    findings:
+      state.findings + state.htmlScripts.length + state.htmlPolicies.length,
     modules: state.modules,
     parse_failures: state.parseFailures,
     limitations: [
@@ -360,7 +366,7 @@ function* analyzeArtifactFileSteps<
   if (classifyOutsideAnalysisScope(file, state)) return;
   addStructuredObservations(file, state);
   if (file.kind === "html" && file.text.included)
-    state.htmlScripts.push(...parseHtmlScripts(file.path, file.text.value));
+    addHtmlReferences(file.path, file.text.value, state);
   if (file.kind === "source-map") addSourceMap(file, context);
   if (file.kind !== "javascript" || !file.text.included) {
     state.files.push({ file, javascript: null, semantic: null });
@@ -440,6 +446,7 @@ const emptyArtifactAnalysis = <
   packages: [],
   jsonModules: [],
   htmlScripts: [],
+  htmlPolicies: [],
   sourceMaps: [],
   visitedNodes: 0,
   findings: 0,
@@ -509,17 +516,39 @@ const unavailablePackage = (
   limitation,
 });
 
-const parseHtmlScripts = (
+const addHtmlReferences = (
   path: string,
   text: string,
-): JavaScriptHtmlScriptObservation[] => {
-  const { scripts, baseHref } = htmlArtifactReferences(text);
-  return scripts.map(({ scriptPath, startOffset, endOffset }) => ({
-    html_path: path,
-    script_path: scriptPath,
-    base_href: baseHref,
-    location: rangeForOffsets(text, startOffset, endOffset),
-  }));
+  state: Pick<
+    MutableArtifactAnalysis<JavaScriptModuleSemanticIr>,
+    "htmlScripts" | "htmlPolicies"
+  >,
+): void => {
+  const { scripts, policies, baseHref } = htmlArtifactReferences(text);
+  for (const { scriptPath, startOffset, endOffset } of scripts)
+    state.htmlScripts.push({
+      html_path: path,
+      script_path: scriptPath,
+      base_href: baseHref,
+      location: rangeForOffsets(text, startOffset, endOffset),
+    });
+  for (const { header, content, startOffset, endOffset } of policies) {
+    const parsed = parseContentSecurityPolicy(content, false);
+    state.htmlPolicies.push({
+      html_path: path,
+      policy: {
+        mechanism: "html-meta",
+        header,
+        policy: content,
+        policy_expression: null,
+        directives: parsed?.directives ?? [],
+        concerns: parsed?.concerns ?? [],
+        dynamic_parts: 0,
+        module_key: null,
+        location: rangeForOffsets(text, startOffset, endOffset),
+      },
+    });
+  }
 };
 
 const parseSourceMap = (
@@ -616,12 +645,7 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.role_paths.length +
   analysis.source_map_urls.length +
   analysis.bundler_registrations.length +
-  analysis.electron.browser_windows.length +
-  analysis.electron.context_bridge_apis.length +
-  analysis.electron.ipc.length +
-  analysis.electron.sender_validations.length +
-  analysis.electron.utility_processes.length +
-  analysis.electron.native_addon_bindings.length;
+  electronStaticFindingCount(analysis.electron);
 
 const rangeForOffsets = (
   text: string,

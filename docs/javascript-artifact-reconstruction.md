@@ -306,16 +306,51 @@ Selected bounded text is then parsed as inert data to recover:
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
-- explicit BrowserWindow options and `webPreferences`, including statically
-  resolvable preload entrypoints;
+- explicit `BrowserWindow`, `BrowserView`, and `WebContentsView` options and
+  `webPreferences`, including statically resolvable preload entrypoints. The
+  finding's `api` names the constructor; views become `web-contents-view`
+  graph nodes;
+- `will-attach-webview` listeners (`on`, `once`, `addListener`,
+  `prependListener`) with an inline handler: writes and deletions through its
+  `webPreferences` and `params` parameters, in source order, and the last
+  statically resolvable preload path. The listener is recognized by its event
+  name; the receiver is not proven to be a webContents, and branches are not
+  evaluated;
 - `contextBridge.exposeInMainWorld` and `exposeInIsolatedWorld` API keys and
-  bounded literal member paths;
+  bounded member paths of a literal API object or of an identifier bound to one
+  stable object-literal initializer (`api_status: object-binding`). Member
+  values that are such identifiers are followed. Keys from a conditional
+  object spread whose branches are known objects are listed separately as
+  `conditional_members`. A visible member write to a bound object adds one
+  unknown member, because its added keys are not enumerated;
 - renderer and main-process IPC operations, literal or dynamic channels, exact
   handler locations, and conservative pairing status;
 - sender, frame, URL, and origin validation candidates without claiming that a
   visible check enforces a complete policy;
+- Content-Security-Policy text from `<meta http-equiv>` elements in HTML
+  files, from JavaScript properties or assignments named
+  `Content-Security-Policy` or `Content-Security-Policy-Report-Only` (such as
+  `responseHeaders` in a `webRequest.onHeadersReceived` handler), from
+  `[...].join(separator)` directive lists, and from string or template literals
+  with at least two directives, including `<meta>` markup inside them. Each
+  policy reports its directives and `concerns`: wildcard and network-scheme
+  sources, `data:` or `blob:` script sources, `'unsafe-inline'` (scripts only
+  without a nonce or hash), `'unsafe-eval'`, and a missing script or plugin
+  fallback. Runtime parts appear as `${…}`; directives containing them are not
+  judged, and omissions are judged only for fully static policies. Where a
+  policy is declared does not prove which documents it applies to;
 - utility-process entrypoints and native `.node` binding requests without
-  parsing or executing the add-on.
+  parsing or executing the add-on. Loader calls are included: a function from
+  `module.createRequire`, the `bindings` and `node-gyp-build` packages, and
+  `process.dlopen`, reached directly, through one stable alias
+  (`loader_basis: alias`), or through a parameter default value
+  (`parameter-default`). A `createRequire` call with a non-`.node` specifier is
+  a `require` reference. `bindings` and `node-gyp-build` choose their add-on at
+  runtime, so the candidates are the `.node` files in `build/Release`,
+  `build/Debug`, and `prebuilds/*` of the nearest inventoried package root
+  (`resolution_basis: loader-package-root`); exactly one candidate resolves the
+  binding with low confidence. Members read from a loader result are not
+  followed.
 
 Electron option values, IPC channels, contextBridge keys, sender checks, and
 network endpoint arguments are read through the semantic value lattice.
@@ -454,6 +489,28 @@ through namespace aliases; unrelated member writes do not discard observed API
 identity. This static check does
 not evaluate arbitrary call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
+
+An Electron API reached through one wrapper parameter is an inference recorded
+in `electron_identity` with `basis: "wrapper-parameter"`. The callee root must be
+a parameter, or a destructured parameter key, of a named function with one
+stable declaration. Every same-file direct call of that function is examined.
+An argument proves the export when it is a proven Electron expression, an
+object-literal member holding one, or one branch of `??`, `||`, `&&`, or a
+conditional. All proven arguments must agree on one export path. The record
+keeps the function, parameter, call-site count, proven argument locations, and
+the number of unresolved arguments. `call_sites_complete` is false when the
+function is also referenced other than as a callee. The syntax observation is
+unchanged, but the relationship from the containing source to the window or
+handler is an inference: `medium` confidence when every call site is known and
+resolved, otherwise `low`. Deeper wrapper chains, calls from other files, and
+writes to the parameter inside the wrapper are not examined.
+
+A local binding with one stable initializer that is a `??`, `||`, `&&`,
+conditional, or object literal is examined the same way, for example
+`const api = options.electron ?? { BrowserWindow: electron.BrowserWindow }`.
+Its `electron_identity` has `basis: "local-alternatives"` with the binding,
+the initializer location, the proving value locations, and the number of
+unresolved values that runtime could select instead.
 
 IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
 with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
