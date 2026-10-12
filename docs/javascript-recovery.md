@@ -74,10 +74,14 @@ output re-parse checks (phases 19.6 and 21.5); otherwise the file is listed in
 proves syntax, not behaviour. `reports/phases.log` keeps the phase summary per
 file and `reports/provenance.json` the exact arguments and gate verdicts.
 
-jsbeautify's Oxc arena and worker stack reserve far more address space than
-they use (a 2.4 MB esbuild bundle peaks at 0.33 GB RSS but aborts under 1 GiB),
-so this engine runs under an 8 GiB address-space ceiling, a 300-second
-operation deadline, 256 MiB of output and 64 MiB per diagnostic stream.
+Builds of jsbeautify before js-beautify-rs `8778d5b` reserve a worker stack of
+2 KiB per input byte regardless of address-space limits (a 2.4 MB esbuild
+bundle peaks at 0.33 GB RSS but aborts below 3 GiB); later builds cap the stack
+at a quarter of the limit. This engine runs under an 8 GiB address-space
+ceiling, a 300-second operation deadline, 256 MiB of output and 64 MiB per
+diagnostic stream. `detected_formats` lists the bundlers and obfuscators the
+phase log's `<name> check: detected` lines report (esbuild, Bun, webpack,
+Turbopack, Akamai BMP, Angular).
 
 ```sh
 export REA_JSBEAUTIFY_COMMAND="$(command -v jsbeautify)"

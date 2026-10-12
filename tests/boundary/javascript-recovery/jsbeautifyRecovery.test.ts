@@ -17,13 +17,13 @@ const linux = it.skipIf(process.platform !== "linux");
 const ENGINE = `#!${process.execPath}
 const { readFileSync, writeFileSync } = require("node:fs");
 const args = process.argv.slice(2);
-if (args[0] === "--version") { console.log("jsbeautify 9.9.9"); process.exit(0); }
+if (args[0] === "--version") { console.log("jsbeautify 9.9.9+abc1234"); process.exit(0); }
 const source = readFileSync(args[0], "utf8");
 const output = args[args.indexOf("--output") + 1];
 writeFileSync(output, "/* recovered */\\n" + source);
 writeFileSync(output + ".args.json", JSON.stringify(args));
 if (args.includes("--deobfuscate") || args.includes("--rename-vars")) {
-  console.error("[DEOBFUSCATE] Phase 0.9: Detected 9 runtime helpers, bundler: esbuild");
+  console.error("[DEOBFUSCATE] Phase 0.9: esbuild/Bun runtime check: detected esbuild runtime with 9 helpers");
   console.error("[OPTIONAL_CHAINING] Detected optional chaining with depth 1");
   console.error("[DEOBFUSCATE] Phase 19.6: Generated output re-parse succeeded");
   if (!source.includes("FAIL")) console.error("[DEOBFUSCATE] Phase 21.5: Generated output re-parse succeeded");
@@ -66,7 +66,7 @@ linux(
 
     expect(evidence.value.provider).toMatchObject({
       id: "jsbeautify",
-      version: "9.9.9",
+      version: "9.9.9+abc1234",
     });
     expect(result).toMatchObject({
       status: "complete",

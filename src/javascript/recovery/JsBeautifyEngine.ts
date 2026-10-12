@@ -77,16 +77,22 @@ const gate = (run: CommandResult, deobfuscated: boolean) => {
   return { passed, exit_code: run.exit_code, signal: run.signal, reparse };
 };
 
-/** Bundler and obfuscator detections the phase log names. */
+/** Bundler and obfuscator detections from the phase log's `<name> check: detected …` lines. */
+const DETECTORS = [
+  [/esbuild\/Bun runtime check: detected ([\w.-]+) runtime/, null],
+  [/webpack check: detected webpack/, "webpack"],
+  [/Turbopack check: detected/, "turbopack"],
+  [/Akamai BMP check: detected/, "akamai-bmp"],
+  [/Angular check: detected/, "angular"],
+] as const;
+
 const detections = (stderr: string): string[] => {
   const found = new Set<string>();
-  for (const match of stderr.matchAll(
-    /Detected \d+ runtime helpers, bundler: ([\w.-]+)/g,
-  ))
-    if (match[1] !== undefined && match[1] !== "unknown") found.add(match[1]);
-  if (/Phase 0\.85: Renamed [1-9]\d* webpack bindings/.test(stderr))
-    found.add("webpack");
-  if (/\[AKAMAI\][^\n]*=> BMP/.test(stderr)) found.add("akamai-bmp");
+  for (const [pattern, name] of DETECTORS) {
+    const match = pattern.exec(stderr);
+    const detected = name ?? match?.[1];
+    if (match !== null && detected !== undefined) found.add(detected);
+  }
   return [...found];
 };
 

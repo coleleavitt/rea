@@ -11,10 +11,10 @@ export const JSBEAUTIFY_REPOSITORY =
   "https://github.com/coleleavitt/js-beautify-rs";
 
 /**
- * Per-operation bounds. The Oxc arena and the worker stack (sized from the
- * input, up to 64 MiB) reserve far more address space than they touch: a
- * 2.4 MB esbuild bundle peaks at 0.33 GB RSS yet aborts under a 1 GiB
- * address-space limit, so the ceiling is 8 GiB. Deobfuscation logs one line
+ * Per-operation bounds. Builds before js-beautify-rs 8778d5b reserve a worker
+ * stack of 2 KiB per input byte regardless of the address-space limit: a
+ * 2.4 MB esbuild bundle peaks at 0.33 GB RSS yet aborts below 3 GiB, so the
+ * ceiling is 8 GiB. Later builds cap the stack at a quarter of the limit. Deobfuscation logs one line
  * per rewrite on stderr (5 MB for that bundle), hence the 64 MiB stream bound.
  */
 export const JSBEAUTIFY_LIMITS = {
