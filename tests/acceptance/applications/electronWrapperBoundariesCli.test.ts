@@ -261,7 +261,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       web_contents_views: 1,
       webview_attach_handlers: 1,
       preload_entrypoints: 2,
-      wrapper_inferred_api_findings: 4,
+      inferred_api_identity_findings: 4,
       context_bridge_apis: 3,
       ipc: { main_handlers: 2, paired_renderer_transmissions: 1 },
     });

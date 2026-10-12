@@ -47,7 +47,9 @@ interface ArgumentOutcome {
 }
 
 /**
- * Infer Electron API identity for callee roots that are parameters of one
+ * Infer Electron API identity for callee roots that are local bindings whose
+ * stable initializer is a `??`, `||`, `&&`, conditional, or object literal of
+ * Electron values, and for roots that are parameters of one
  * named wrapper function. Only same-file direct calls are examined, and only
  * one wrapper level: argument expressions must be proven Electron exports, an
  * object literal member holding one, or a `??`, `||`, `&&` or conditional
@@ -61,6 +63,11 @@ export const createElectronWrapperParameters = (
   const parameters = new Map<string, WrapperParameter | null>();
   const callSites = new Map<string, t.CallExpression["arguments"][]>();
   const escaped = new Set<string>();
+  const locals: {
+    readonly root: t.Identifier;
+    readonly members: readonly string[];
+    readonly initializer: t.Expression;
+  }[] = [];
 
   const parameterFor = (
     root: t.Identifier,
@@ -79,6 +86,19 @@ export const createElectronWrapperParameters = (
       if (!t.isIdentifier(root)) return;
       if (!members.every((member): member is string => member !== null)) return;
       const binding = resolveSemanticBindingState(state, root, root.name);
+      const local = semanticStableInitializer(binding, state);
+      const alternatives =
+        local?.projection.length === 0
+          ? unwrapJavaScriptExpression(local.node).node
+          : undefined;
+      if (
+        t.isLogicalExpression(alternatives) ||
+        t.isConditionalExpression(alternatives) ||
+        t.isObjectExpression(alternatives)
+      ) {
+        locals.push({ root, members, initializer: alternatives });
+        return;
+      }
       if (
         binding?.kind !== "parameter" ||
         binding.definitions.length !== 1 ||
@@ -124,6 +144,28 @@ export const createElectronWrapperParameters = (
       readonly root: t.Identifier;
       readonly binding: ElectronCalleeBinding;
     }> {
+      for (const { root, members, initializer } of locals) {
+        const outcomes = expressionOutcomes(initializer, members, rootExport);
+        const proven = agreedOutcomes(outcomes);
+        const [path] = proven;
+        if (path === undefined) continue;
+        yield {
+          root,
+          binding: {
+            path: path.path,
+            consumed_members: members.length,
+            identity: {
+              basis: "local-alternatives",
+              binding: root.name,
+              initializer_location: range(initializer),
+              electron_value_locations: proven.map(({ location }) =>
+                range(location),
+              ),
+              unresolved_values: outcomes.length - proven.length,
+            },
+          },
+        };
+      }
       for (const { root, members, parameter } of deferred) {
         const bindingId = parameter.functionBinding.bindingId;
         const sites = callSites.get(bindingId) ?? [];
@@ -131,13 +173,9 @@ export const createElectronWrapperParameters = (
         const outcomes = sites.flatMap((arguments_) =>
           argumentOutcomes(arguments_, parameter, wanted, rootExport),
         );
-        const proven = outcomes.filter(
-          (outcome): outcome is ArgumentOutcome & { path: readonly string[] } =>
-            outcome.path !== undefined,
-        );
-        const paths = new Set(proven.map(({ path }) => path.join("\0")));
+        const proven = agreedOutcomes(outcomes);
         const [path] = proven;
-        if (path === undefined || paths.size !== 1) continue;
+        if (path === undefined) continue;
         // The callee path is the resolved argument path; the callee members
         // already folded into it are consumed rather than appended again.
         const identity: WrapperIdentity = {
@@ -164,6 +202,19 @@ export const createElectronWrapperParameters = (
       }
     },
   };
+};
+
+// Proven outcomes, only when they all name the same Electron export.
+const agreedOutcomes = (
+  outcomes: readonly ArgumentOutcome[],
+): readonly (ArgumentOutcome & { readonly path: readonly string[] })[] => {
+  const proven = outcomes.filter(
+    (outcome): outcome is ArgumentOutcome & { path: readonly string[] } =>
+      outcome.path !== undefined,
+  );
+  return new Set(proven.map(({ path }) => path.join("\0"))).size === 1
+    ? proven
+    : [];
 };
 
 const argumentOutcomes = (

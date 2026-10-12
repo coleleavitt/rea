@@ -197,9 +197,11 @@ export interface ElectronNativeAddonBindingFinding {
 
 /**
  * How a finding's Electron API identity was established. A module binding is
- * a proven lexical alias of the Electron module. A wrapper parameter is an
- * inference: the callee root is a parameter of a function whose same-file call
- * sites pass a proven Electron export, directly or as an object-literal member.
+ * a proven lexical alias of the Electron module. The other bases are
+ * inferences. A wrapper parameter is a parameter of a function whose same-file
+ * call sites pass a proven Electron export, directly or as an object-literal
+ * member. Local alternatives are a binding initialized with a fallback,
+ * conditional, or object literal of which some branches prove the export.
  */
 export type ElectronApiIdentity =
   | { readonly basis: "module-binding" }
@@ -217,6 +219,14 @@ export type ElectronApiIdentity =
       readonly electron_argument_locations: readonly JavaScriptSourceRange[];
       /** Argument expressions or branches whose value is unresolved. */
       readonly unresolved_arguments: number;
+    }
+  | {
+      readonly basis: "local-alternatives";
+      readonly binding: string;
+      readonly initializer_location: JavaScriptSourceRange;
+      /** Branches or members of the initializer that prove the export. */
+      readonly electron_value_locations: readonly JavaScriptSourceRange[];
+      readonly unresolved_values: number;
     };
 
 /** One write to a `will-attach-webview` handler's preferences or params. */

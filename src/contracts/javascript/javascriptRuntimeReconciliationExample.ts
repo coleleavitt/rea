@@ -161,7 +161,7 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
         resolved_utility_entrypoints: 0,
         native_addon_bindings: 0,
         resolved_native_addon_bindings: 0,
-        wrapper_inferred_api_findings: 0,
+        inferred_api_identity_findings: 0,
       },
       statistics: {
         relevant_files: 1,

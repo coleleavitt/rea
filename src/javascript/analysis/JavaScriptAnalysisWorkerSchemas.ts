@@ -57,6 +57,13 @@ const electronIdentity = z.discriminatedUnion("basis", [
     electron_argument_locations: z.array(range),
     unresolved_arguments: count,
   }),
+  z.strictObject({
+    basis: z.literal("local-alternatives"),
+    binding: z.string(),
+    initializer_location: range,
+    electron_value_locations: z.array(range),
+    unresolved_values: count,
+  }),
 ]);
 const electronFindingContext = {
   ...findingContext,

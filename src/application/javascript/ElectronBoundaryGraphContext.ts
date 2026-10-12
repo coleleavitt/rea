@@ -151,10 +151,7 @@ export const addElectronApiEdge = (
   }
   addElectronInferenceEdge(context, {
     ...input,
-    confidence:
-      identity.call_sites_complete && identity.unresolved_arguments === 0
-        ? "medium"
-        : "low",
+    confidence: electronIdentityComplete(identity) ? "medium" : "low",
     limitations: [
       ...electronIdentityLimitations(identity),
       ...(input.limitations ?? []),
@@ -162,14 +159,24 @@ export const addElectronApiEdge = (
   });
 };
 
+const electronIdentityComplete = (identity: ElectronApiIdentity): boolean =>
+  identity.basis === "module-binding" ||
+  (identity.basis === "wrapper-parameter"
+    ? identity.call_sites_complete && identity.unresolved_arguments === 0
+    : identity.unresolved_values === 0);
+
 const electronIdentityLimitations = (
   identity: ElectronApiIdentity,
-): readonly string[] =>
-  identity.basis === "module-binding"
-    ? []
-    : [
-        `The Electron API identity is inferred from ${String(identity.electron_argument_locations.length)} argument(s) passed to parameter ${identity.parameter} of ${identity.function_name}; ${String(identity.unresolved_arguments)} other argument value(s) are unresolved${identity.call_sites_complete ? "" : ", and the function is also referenced outside direct calls"}.`,
-      ];
+): readonly string[] => {
+  if (identity.basis === "module-binding") return [];
+  if (identity.basis === "local-alternatives")
+    return [
+      `The Electron API identity is inferred from ${String(identity.electron_value_locations.length)} branch or member value(s) of the initializer of ${identity.binding}; ${String(identity.unresolved_values)} other value(s) are unresolved and may be selected at runtime.`,
+    ];
+  return [
+    `The Electron API identity is inferred from ${String(identity.electron_argument_locations.length)} argument(s) passed to parameter ${identity.parameter} of ${identity.function_name}; ${String(identity.unresolved_arguments)} other argument value(s) are unresolved${identity.call_sites_complete ? "" : ", and the function is also referenced outside direct calls"}.`,
+  ];
+};
 
 /** Deterministic source-range key for artifact-local graph identities. */
 export const electronRangeKey = (range: JavaScriptSourceRange): string =>

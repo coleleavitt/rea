@@ -195,8 +195,8 @@ export const summarizeElectronBoundaries = (
         moduleKind: finding.module_kind,
       }),
     ).length,
-    wrapper_inferred_api_findings: identities.filter(
-      ({ basis }) => basis === "wrapper-parameter",
+    inferred_api_identity_findings: identities.filter(
+      ({ basis }) => basis !== "module-binding",
     ).length,
   };
 };

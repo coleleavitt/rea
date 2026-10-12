@@ -442,6 +442,13 @@ handler is an inference: `medium` confidence when every call site is known and
 resolved, otherwise `low`. Deeper wrapper chains, calls from other files, and
 writes to the parameter inside the wrapper are not examined.
 
+A local binding with one stable initializer that is a `??`, `||`, `&&`,
+conditional, or object literal is examined the same way, for example
+`const api = options.electron ?? { BrowserWindow: electron.BrowserWindow }`.
+Its `electron_identity` has `basis: "local-alternatives"` with the binding,
+the initializer location, the proving value locations, and the number of
+unresolved values that runtime could select instead.
+
 IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
 with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
 channel; a renderer send pairs only with one unique `ipcMain.on`/`once`

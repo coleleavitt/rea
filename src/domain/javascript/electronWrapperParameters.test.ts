@@ -99,4 +99,36 @@ describe("Electron API identity through wrapper parameters", () => {
       },
     ]);
   });
+
+  it("infers Electron APIs from local fallback and object-literal alternatives", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const electron = require("electron");
+      const api = injected.electron ?? { BrowserWindow: electron.BrowserWindow };
+      new api.BrowserWindow({ show: false });
+      const deps = { ipc: electron.ipcMain };
+      deps.ipc.handle("local:ping", () => 0);
+      const mixed = flag ? electron.ipcMain : electron.ipcRenderer;
+      mixed.on("mixed", () => 0);
+    `);
+
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        electron_identity: {
+          basis: "local-alternatives",
+          binding: "api",
+          unresolved_values: 1,
+        },
+      },
+    ]);
+    expect(analysis.electron.ipc).toMatchObject([
+      {
+        channel: "local:ping",
+        electron_identity: {
+          basis: "local-alternatives",
+          binding: "deps",
+          unresolved_values: 0,
+        },
+      },
+    ]);
+  });
 });
