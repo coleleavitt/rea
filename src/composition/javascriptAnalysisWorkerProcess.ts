@@ -8,6 +8,7 @@ import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptS
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
   javaScriptGraphBytesWithinRetention,
+  javaScriptTransferByteBudget,
   measureJavaScriptModuleTransfer,
 } from "../javascript/analysis/JavaScriptAnalysisTransfer.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -18,7 +19,11 @@ import {
   type JavaScriptSourceWorkerAnalyzer,
 } from "../javascript/analysis/JavaScriptAnalysisWorkerServer.js";
 
-const analyze: JavaScriptSourceWorkerAnalyzer = async (file, callbacks) => {
+const analyze: JavaScriptSourceWorkerAnalyzer = async (
+  file,
+  nodeBudget,
+  callbacks,
+) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
   await callbacks.phase("parse");
@@ -54,7 +59,10 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (file, callbacks) => {
   );
   parsed = null;
   const module = projectJavaScriptModuleSemantics(ir);
-  const measured = measureJavaScriptModuleTransfer(module);
+  const measured = measureJavaScriptModuleTransfer(
+    module,
+    javaScriptTransferByteBudget(resultBudgetBytes),
+  );
   if (measured.retentionBytes > resultBudgetBytes)
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
@@ -76,6 +84,8 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (file, callbacks) => {
           resultBudgetBytes - measured.retentionBytes,
         ),
       ),
+      nodeBudget,
+      facts.electron.call_paths,
     ),
   );
   return { module, projection };

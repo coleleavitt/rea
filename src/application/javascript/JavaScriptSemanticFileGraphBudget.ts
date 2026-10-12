@@ -19,11 +19,15 @@ const serializedBytes = (value: unknown): number =>
  * admits facts in projection order until the first refusal closes the file,
  * so a truncated file keeps a source-ordered prefix of its passes. Nodes wait
  * here until an admitted fact references them; unknown frontiers wait until
- * every relation was offered. Omitted facts are counted exactly.
+ * every relation was offered. Omitted facts are counted exactly. A
+ * caller-selected node capacity closes admission the same way.
  */
 export class SemanticFileGraphBudget {
   readonly limit: number | null;
+  /** Caller-selected node capacity of this file; null when none was selected. */
+  readonly nodeLimit: number | null;
   #used = 0;
+  #nodes = 0;
   #closed = false;
   readonly #chargedContexts = new Set<string>();
   readonly #omittedNodes = new Set<string>();
@@ -34,12 +38,14 @@ export class SemanticFileGraphBudget {
   readonly deferredUnknowns = new Map<string, JavaScriptSemanticGraphUnknown>();
 
   /** A null limit admits every fact and still measures its serialized size. */
-  constructor(limit: number | null) {
-    if (limit !== null && (!Number.isSafeInteger(limit) || limit < 0))
-      throw new RangeError(
-        "Semantic file graph budget must be a nonnegative safe integer",
-      );
+  constructor(limit: number | null, nodeLimit: number | null = null) {
+    for (const value of [limit, nodeLimit])
+      if (value !== null && (!Number.isSafeInteger(value) || value < 0))
+        throw new RangeError(
+          "Semantic file graph budget must be a nonnegative safe integer",
+        );
     this.limit = limit;
+    this.nodeLimit = nodeLimit;
   }
 
   /** Whether a refused fact closed admission for this file. */
@@ -69,6 +75,18 @@ export class SemanticFileGraphBudget {
     }
     this.#used += bytes;
     if (newContext) this.#chargedContexts.add(contextId);
+    return true;
+  }
+
+  /** Charge one node against the node capacity and the byte budget. */
+  admitNode(
+    node: SemanticFact,
+    contexts: JavaScriptSemanticEvidenceContextRegistry,
+  ): boolean {
+    if (this.nodeLimit !== null && this.#nodes >= this.nodeLimit)
+      this.#closed = true;
+    if (!this.admit(node, contexts)) return false;
+    this.#nodes += 1;
     return true;
   }
 

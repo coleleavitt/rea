@@ -136,6 +136,15 @@ export const analyzeParsedJavaScriptReferences = (
   return collectSemanticReferences(file.program, state, name);
 };
 
+/** Share the lexical index with bounded, demand-driven boundary analyses. */
+export function* indexJavaScriptBindingsSteps(
+  program: t.Program,
+): Generator<void, JavaScriptSemanticAnalysisState> {
+  const state = createState(program);
+  yield* collectDefinitionsSteps(program, state);
+  return state;
+}
+
 /** Recover semantics from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
@@ -418,12 +427,31 @@ export const classifyParsedJavaScriptElectronBindings = (
 export function* classifyParsedJavaScriptElectronBindingsSteps(
   file: ParsedJavaScriptSource,
 ): Generator<void, JavaScriptElectronSemanticFacts> {
+  const state = createState(file.program);
+  yield* collectDefinitionsSteps(file.program, state);
+  const { callees, apiObjects, loaders } =
+    yield* indexJavaScriptElectronIdentitySteps(file.program, state);
+  return { callees, apiObjects, loaders };
+}
+
+/**
+ * Shared lexical identity and visible-write proof for direct and wrapped
+ * calls, with the classified callee identities, bound bridge API objects and
+ * native loader calls of one source.
+ */
+export interface JavaScriptElectronIdentity extends JavaScriptElectronSemanticFacts {
+  readonly intactExport: (path: readonly (string | null)[]) => boolean;
+  readonly exportPath: (root: t.Node) => readonly string[] | undefined;
+}
+
+export function* indexJavaScriptElectronIdentitySteps(
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, JavaScriptElectronIdentity> {
   const facts = new Map<number, ElectronCalleeBinding>();
   const exposures: (t.CallExpression | t.OptionalCallExpression)[] = [];
   const loaders = new WeakMap<t.Node, JavaScriptNativeLoaderCall>();
   const memberWritten = new Set<string>();
-  const state = createState(file.program);
-  yield* collectDefinitionsSteps(file.program, state);
   const interop = createSemanticModuleInterop(state);
   const writes = new SemanticPropertyPathCoverage();
   let collectedWrites = false;
@@ -454,7 +482,7 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
       : undefined;
   };
   yield* collectJavaScriptIdentityWritesSteps(
-    file.program,
+    program,
     (root, kind) => {
       if (kind === "opaque-call") return interop.opaqueMutationPath(root);
       if (kind === "member" && t.isIdentifier(root)) {
@@ -498,7 +526,10 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
       : { ...origin, importedPath: [...origin.importedPath, ...members] };
   };
   const nativeLoader = createNativeLoaderClassifier(state, moduleOrigin);
-  yield* traverseJavaScriptAstSteps(file.program, {
+  const intactExport = (path: readonly (string | null)[]): boolean =>
+    ELECTRON_MODULE.test(path[0] ?? "") &&
+    !writes.covers(["electron", ...path.slice(1)]);
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
       if (
         !t.isCallExpression(node) &&
@@ -517,7 +548,7 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
         wrappers.defer(root, members);
         return;
       }
-      if (!writes.covers(["electron", ...exported, ...members]))
+      if (intactExport(["electron", ...exported, ...members]))
         facts.set(root.start ?? -1, {
           path: exported,
           consumed_members: 0,
@@ -525,9 +556,9 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
         });
     },
   });
-  yield* wrappers.collectCallSitesSteps(file.program);
+  yield* wrappers.collectCallSitesSteps(program);
   for (const { root, binding } of wrappers.resolved())
-    if (!writes.covers(["electron", ...binding.path]))
+    if (intactExport(["electron", ...binding.path]))
       facts.set(root.start ?? -1, binding);
   return {
     callees: facts,
@@ -538,6 +569,8 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
       memberWritten,
     ),
     loaders,
+    intactExport,
+    exportPath: rootExport,
   };
 }
 

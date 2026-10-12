@@ -177,6 +177,7 @@ export class JavaScriptAnalysisWorker {
   /** Analyze inert source; hard worker failure does not terminate this process. */
   async analyze(
     file: JavaScriptArtifactFile,
+    nodeBudget: number | null,
     signal?: AbortSignal,
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
@@ -227,6 +228,7 @@ export class JavaScriptAnalysisWorker {
       let offeredResultBudget = 0;
       const request = javaScriptWorkerRequestSchema.parse({
         id,
+        node_budget: nodeBudget,
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
       });

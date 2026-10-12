@@ -54,7 +54,11 @@ export interface JavaScriptHtmlPolicyObservation {
 
 /** One original source declared by a local source map. */
 export interface JavaScriptSourceMapOriginal {
-  readonly reference: JavaScriptSourceMapReference;
+  /** Index within the leaf map's sources and sourcesContent arrays. */
+  readonly source_index: number;
+  /** Index across the flattened map's leaf declarations. */
+  readonly declaration_index: number;
+  readonly reference: JavaScriptSourceMapReference | null;
   readonly content: string | null;
   readonly content_sha256: string | null;
 }

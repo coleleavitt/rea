@@ -8,6 +8,9 @@ export const JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS = {
   timeoutMs: 300_000,
 } as const;
 
+/** Maximum caller-selected node capacity; the Evidence byte budget still applies. */
+export const JAVASCRIPT_SEMANTIC_NODE_MAXIMUM = 1_000_000;
+
 /** Project observed execution limits without inventing unmeasured values. */
 export const javaScriptAnalysisCoverageLimits = (
   limits: Readonly<Record<string, JsonValue>> | null,
@@ -37,6 +40,24 @@ export const javaScriptAnalysisCoverageLimits = (
 
 /** Optional operational choices; omission keeps them out of Evidence parameters. */
 export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
+  max_semantic_nodes: z
+    .number()
+    .int()
+    .min(1)
+    .max(JAVASCRIPT_SEMANTIC_NODE_MAXIMUM)
+    .optional()
+    .describe(
+      "Maximum retained semantic nodes across the application. Omitted, only the serialized Evidence byte budget bounds the semantic graph; worker heap and parent result admission remain enforced.",
+    ),
+  max_semantic_nodes_per_file: z
+    .number()
+    .int()
+    .min(1)
+    .max(JAVASCRIPT_SEMANTIC_NODE_MAXIMUM)
+    .optional()
+    .describe(
+      "Maximum retained semantic nodes per source file, additionally bounded by max_semantic_nodes and the source's serialized Evidence byte budget. Omitted, only the byte budget applies.",
+    ),
   max_heap_mb: z
     .number()
     .int()

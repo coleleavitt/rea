@@ -167,7 +167,7 @@ export const addSemanticGraphNode = (
     budget.pendingNodes.set(node.node_id, node);
     return node;
   }
-  if (!budget.admit(node, state.evidenceContexts)) {
+  if (!budget.admitNode(node, state.evidenceContexts)) {
     budget.omitNode(node.node_id);
     return null;
   }
@@ -189,7 +189,7 @@ const admitPendingNode = (
     !admitPendingNode(state, budget, node.function_node_id)
   )
     return false;
-  if (!budget.admit(node, state.evidenceContexts)) return false;
+  if (!budget.admitNode(node, state.evidenceContexts)) return false;
   budget.pendingNodes.delete(nodeId);
   state.nodes.set(nodeId, node);
   return true;

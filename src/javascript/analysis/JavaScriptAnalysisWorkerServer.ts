@@ -9,7 +9,10 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { writeJavaScriptAnalysisTransfer } from "./JavaScriptAnalysisTransfer.js";
+import {
+  javaScriptTransferByteBudget,
+  writeJavaScriptAnalysisTransfer,
+} from "./JavaScriptAnalysisTransfer.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "./JavaScriptAnalysisWorkerSchemas.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS as DEFAULTS,
@@ -31,6 +34,7 @@ export interface JavaScriptWorkerSemanticAdmission {
 export interface JavaScriptSourceWorkerAnalyzer {
   (
     file: JavaScriptArtifactFile,
+    nodeBudget: number | null,
     callbacks: {
       readonly phase: (
         phase: "parse" | "static" | "semantic" | "projection",
@@ -105,6 +109,7 @@ const analyzeJob = async (
   requests: AsyncIterator<string>,
 ): Promise<void> => {
   try {
+    let resultBudgetBytes = 0;
     const source = await readFile(join(root, `${request.id}.source`), "utf8");
     if (
       createHash("sha256").update(source).digest("hex") !== request.text_sha256
@@ -117,6 +122,7 @@ const analyzeJob = async (
         ...request.file,
         text: { included: true, value: source },
       },
+      request.node_budget,
       {
         phase: async (phase) => send({ kind: "phase", id: request.id, phase }),
         checkpoint: async (facts) => {
@@ -157,8 +163,9 @@ const analyzeJob = async (
             throw new TypeError(
               "JavaScript worker admission names a different source job",
             );
+          resultBudgetBytes = admission.semantic_result_budget_bytes;
           return {
-            resultBytes: admission.semantic_result_budget_bytes,
+            resultBytes: resultBudgetBytes,
             graphBytes: admission.semantic_graph_bytes,
           };
         },
@@ -172,6 +179,7 @@ const analyzeJob = async (
             join(root, `${request.id}.records`),
             result.module,
             result.projection,
+            javaScriptTransferByteBudget(resultBudgetBytes),
           );
     await send({ kind: "complete", id: request.id, descriptor });
   } catch (cause: unknown) {

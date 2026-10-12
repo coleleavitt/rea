@@ -173,7 +173,11 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         await completeJavaScriptAnalysisSteps(steps, signal);
         continue;
       }
-      const result = await worker.analyze(file, signal);
+      const result = await worker.analyze(
+        file,
+        projection.remainingFileNodeBudget(),
+        signal,
+      );
       const facts = result.ok ? result.value : result.error;
       const applicationProjectionFailure = facts.applicationProjectionFailure;
       if (facts.projection !== null)
@@ -573,6 +577,7 @@ const collectSourceMapOriginals = (
   maps: readonly Readonly<Record<string, unknown>>[],
 ): JavaScriptSourceMapObservation => {
   const sources: JavaScriptSourceMapOriginal[] = [];
+  let declarationIndex = 0;
   for (const map of maps) {
     const names = map.sources;
     if (!Array.isArray(names))
@@ -590,7 +595,7 @@ const collectSourceMapOriginals = (
       );
     const root = typeof map.sourceRoot === "string" ? map.sourceRoot : null;
     for (const [index, raw] of names.entries()) {
-      if (typeof raw !== "string")
+      if (raw !== null && typeof raw !== "string")
         return invalidSourceMap(
           file,
           "Source map contains a non-string source name.",
@@ -598,7 +603,12 @@ const collectSourceMapOriginals = (
       const rawContent = Array.isArray(contents) ? contents[index] : undefined;
       const content = typeof rawContent === "string" ? rawContent : null;
       sources.push({
-        reference: resolveJavaScriptSourceMapReference(raw, root, file.path),
+        source_index: index,
+        declaration_index: declarationIndex++,
+        reference:
+          typeof raw === "string"
+            ? resolveJavaScriptSourceMapReference(raw, root, file.path)
+            : null,
         content,
         content_sha256: content === null ? null : sha256(content),
       });

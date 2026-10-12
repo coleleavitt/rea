@@ -492,11 +492,16 @@ const budgetFile = (source: string): JavaScriptArtifactFile => ({
   text: { included: true, value: source },
 });
 
-const projectWithin = (source: string, graphByteBudget: number) => {
+const projectWithin = (
+  source: string,
+  graphByteBudget: number | null,
+  nodeBudget: number | null = null,
+) => {
   const steps = projectJavaScriptSemanticFileSteps(
     budgetFile(source),
     analyzeJavaScriptSemantics(source),
     graphByteBudget,
+    nodeBudget,
   );
   for (;;) {
     const next = steps.next();
@@ -984,3 +989,40 @@ it.each(["{}", "unknownRoot", "{ a: null }"])(
     expect(trace.nodes.filter(({ kind }) => kind === "literal")).toEqual([]);
   },
 );
+
+it("bounds a source by a caller-selected node capacity and checks adopted capacity", () => {
+  const full = projectWithin(BUDGET_SOURCE, null);
+  const capped = projectWithin(BUDGET_SOURCE, null, 30);
+  expect(capped.nodes).toHaveLength(30);
+  expect(capped.coverage).toMatchObject({
+    status: "truncated",
+    omitted_nodes: full.nodes.length - 30,
+  });
+  const projection = createJavaScriptSemanticGraphProjection({
+    totalNodes: 35,
+    fileNodes: 30,
+  });
+  expect(projection.remainingFileNodeBudget()).toBe(30);
+  projection.adoptFileProjection(budgetFile(BUDGET_SOURCE), capped);
+  expect(projection.remainingFileNodeBudget()).toBe(5);
+  const graph = projection.finish(
+    SHA256,
+    { graph_id: `jag_${"b".repeat(64)}`, nodes: [] },
+    [],
+  );
+  expect(graph.coverage).toMatchObject({
+    truncated: true,
+    omitted_nodes: full.nodes.length - 30,
+    limits: [
+      { name: "semantic_graph_file_node_ceiling", value: 30, unit: "items" },
+      { name: "semantic_graph_node_ceiling", value: 35, unit: "items" },
+    ],
+  });
+  expect(
+    createJavaScriptSemanticGraphProjection().remainingFileNodeBudget(),
+  ).toBeNull();
+  const bounded = createJavaScriptSemanticGraphProjection({ totalNodes: 29 });
+  expect(() =>
+    bounded.adoptFileProjection(budgetFile(BUDGET_SOURCE), capped),
+  ).toThrow("exceed the offered node capacity");
+});

@@ -29,6 +29,7 @@ export interface ElectronGraphEdgeInput {
     | "exposes"
     | "sends"
     | "invokes"
+    | "calls"
     | "handles";
   readonly operation: string;
   readonly properties: Readonly<Record<string, unknown>>;
@@ -113,7 +114,8 @@ export const addElectronInferenceEdge = (
 /**
  * Observed syntax of an Electron API call or construction. An identity
  * inferred through a wrapper parameter is stated as a limitation; relationships
- * that depend on it use `addElectronApiEdge`.
+ * that depend on it use `addElectronApiEdge`. A finding produced by lexical
+ * wrapper substitution is an inference rather than an observation.
  */
 export const electronApiEvidence = (input: {
   readonly file: JavaScriptArtifactFile;
@@ -121,9 +123,12 @@ export const electronApiEvidence = (input: {
   readonly operation: string;
   readonly coverage: JavaScriptArtifactGraphCoverage;
   readonly identity: ElectronApiIdentity;
+  readonly resolutionBasis?: "wrapper-substitution" | undefined;
   readonly limitations?: readonly string[];
 }): ApplicationGraphEvidence =>
-  astObservationEvidence({
+  (input.resolutionBasis === "wrapper-substitution"
+    ? staticInferenceEvidence
+    : astObservationEvidence)({
     sha256: input.file.sha256,
     path: input.file.path,
     range: input.range,

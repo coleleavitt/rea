@@ -32,8 +32,10 @@ export interface JavaScriptSourceAnalysisLimits {
 
 /** Sequential source-analysis authority with independently verified cleanup. */
 export interface JavaScriptSourceAnalysisPort {
+  /** `nodeBudget` is the caller-selected node capacity offered to this source, or null. */
   analyze(
     file: JavaScriptArtifactFile,
+    nodeBudget: number | null,
     signal?: AbortSignal,
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   /** Limits that offered each analyzed source its semantic-fact byte budget. */

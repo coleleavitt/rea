@@ -207,9 +207,11 @@ const addContextBridge = (
           conditional_members: value.conditional_members,
           unknown_members: value.unknown_members,
           electron_identity: value.electron_identity,
+          resolution_basis: value.resolution_basis ?? "direct-syntax",
         },
         evidence: electronApiEvidence({
           file,
+          resolutionBasis: value.resolution_basis,
           range: value.location,
           operation: "observe-context-bridge-api",
           coverage,

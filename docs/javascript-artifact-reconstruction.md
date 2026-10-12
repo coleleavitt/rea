@@ -191,6 +191,25 @@ default). Reaching it fails the current source with the same memory resource
 failure and reports `worker_process_memory_limit_bytes`, also a coverage limit;
 the next source starts a new analyzer. Bun elsewhere enforces no analyzer limit.
 
+Callers may additionally cap semantic nodes with `max_semantic_nodes` and
+`max_semantic_nodes_per_file` (CLI: `--max-semantic-nodes` and
+`--max-semantic-nodes-per-file`), each from 1 to 1000000. Neither has a
+default; omitted, only the serialized byte budget applies. The per-file offer
+is also bounded by the remaining application capacity, and a capped source
+keeps the same connected source-ordered prefix with exact omitted counts.
+These controls do not bypass the byte budget, worker heap, execution deadline
+or parent result admission. Truncated coverage reports each selected node
+ceiling alongside the byte budget.
+
+While sources remain, the sequential worker reserves one next compact static
+checkpoint at its 8 MiB bound with the same 2x retention expansion used at
+admission. Earlier checkpoints are already charged to retained bytes; the
+remaining inventory does not multiply the reserve. Streamed file transfers keep the default 512 MiB
+allowance, and can grow with the parent's offered retention budget (2x byte
+expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The parent
+still independently checks actual bytes, record overhead, digests and source
+identities before adopting results.
+
 A source that exhausts the analyzer heap does not terminate the CLI/MCP
 process. Completed static facts are retained, other files can still be analyzed,
 and unexamined semantic relationships remain explicit unknowns. The parent
@@ -443,8 +462,29 @@ Source-map contents are parsed as local input. The graph stores original source 
 
 Only explicitly present BrowserWindow values are observations. REA does not
 substitute version-dependent Electron defaults for omitted `webPreferences`.
-Dynamic option objects, bridge keys, API objects, and IPC channel expressions
+Unresolved option objects, bridge keys, API objects, and IPC channel expressions
 remain unknown and make coverage partial.
+
+Recognized literal module-table bootstraps also support bounded lexical
+substitution through module exports, import helper bodies, local wrapper calls,
+returned closures, object spreads, and callback parameters. Recovered Electron
+paths retain source ranges, module identities, literal channels and branch
+conditions as static candidates. Unknown spreads, reassigned bindings, accessors,
+dynamic channels and unsupported syntax do not become exact implementations.
+This pass neither executes the bundle nor proves that runtime guards pass.
+An ambiguous or unresolved handler retains its channel registration but does
+not acquire a path to one arbitrarily selected callback. Unknown factory
+conditions retain both return branches, including fallthrough. Short-circuit
+selection distinguishes truthiness from nullishness; uncertain `??` paths
+retain a nullish guard rather than a falsy guard.
+
+These paths appear as contextual `javascript-expression` nodes. An exact `api`
+seed such as `desktop.copy` can trace an exposed member through a unique IPC
+pairing to an external API call. `addListener` is normalized to `on`. Semantic
+projection retains these boundary paths before bulk function definitions, within
+the per-file semantic budget; omitted general semantics remain explicitly
+partial. Wrapper expansion is bounded by one million visits/substitutions and
+128 nested substitutions, with exhaustion reported as unknown coverage.
 
 Electron API identity follows proven lexical module aliases. Namespace interop
 also preserves identity when the complete Rolldown helper operations, lexical
@@ -514,7 +554,7 @@ unresolved values that runtime could select instead.
 
 IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
 with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
-channel; a renderer send pairs only with one unique `ipcMain.on`/`once`
+channel; a renderer send pairs only with one unique `ipcMain.on`/`once`/`addListener`
 candidate. Dynamic channels are never paired, and multiple compatible handlers
 are reported as ambiguous without adding a caller-to-handler edge. A matching
 channel still does not prove registration order, reachability, or runtime use.
