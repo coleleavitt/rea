@@ -103,10 +103,8 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file,
     accumulator,
     evaluation.status === "available"
-      ? []
-      : [
-          `Constant folding was unavailable (${evaluation.reason}); only literal syntax supplied static values.`,
-        ],
+      ? { status: "available" }
+      : { status: "unavailable", reason: evaluation.reason },
   );
 }
 
@@ -128,11 +126,10 @@ const finalizeStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
-  evaluationLimitations: readonly string[],
+  constantFolding: JavaScriptStaticAnalysis["constant_folding"],
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
-    ...evaluationLimitations,
     ...(parserErrors === 0
       ? []
       : [
@@ -206,6 +203,7 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    constant_folding: constantFolding,
     limitations,
   };
 };

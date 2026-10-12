@@ -129,6 +129,10 @@ export interface JavaScriptStaticAnalysis {
   }[];
   readonly vendors: readonly string[];
   readonly electron: ElectronStaticFindings;
+  /** Whether finding values could be folded beyond literal syntax. */
+  readonly constant_folding:
+    | { readonly status: "available" }
+    | { readonly status: "unavailable"; readonly reason: string };
   readonly limitations: readonly string[];
 }
 

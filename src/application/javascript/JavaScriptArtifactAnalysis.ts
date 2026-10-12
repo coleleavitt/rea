@@ -341,6 +341,15 @@ const finalizeArtifactAnalysis = <
             (failure) => (failure === undefined ? [] : [failure.reason]),
           ),
       ),
+      ...state.files.flatMap(({ file, javascript }) =>
+        javascript === null ||
+        javascript.parse_status === "failed" ||
+        javascript.constant_folding.status === "available"
+          ? []
+          : [
+              `${file.path}: Constant folding was unavailable (${javascript.constant_folding.reason}); only literal syntax supplied static values.`,
+            ],
+      ),
     ],
   };
 };

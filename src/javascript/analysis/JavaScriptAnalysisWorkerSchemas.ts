@@ -346,6 +346,10 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     vendors: strings,
     electron,
+    constant_folding: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("available") }),
+      z.strictObject({ status: z.literal("unavailable"), reason: z.string() }),
+    ]),
     limitations: strings,
   })
   .transform((analysis) => ({

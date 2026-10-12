@@ -41,6 +41,10 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
     utility_processes: [],
     native_addon_bindings: [],
   },
+  constant_folding: {
+    status: "unavailable",
+    reason: "JavaScript source could not be parsed.",
+  },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",
     "JavaScript syntax was parsed as data and was never evaluated.",
