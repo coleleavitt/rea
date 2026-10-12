@@ -13,12 +13,16 @@ const execute = promisify(execFile);
 const createModuleLookupFixture = async () => {
   const root = await createTestTempDirectory("rea-module-lookup-");
   await writeFixtureFiles(root, {
-    "package.json": JSON.stringify({ name: "module-lookup-fixture" }),
+    "package.json": JSON.stringify({
+      name: "module-lookup-fixture",
+      type: "commonjs",
+    }),
     "esm/entry.mjs": [
       'import "./extensionless";',
       'import "./directory";',
       'import "./explicit.js";',
       'import "./exact.js";',
+      'import "./actual.cjs?cache=1";',
       'import fallback from "empty-main";',
       'import "nested-main";',
       'import "file-only";',
@@ -31,10 +35,16 @@ const createModuleLookupFixture = async () => {
     "esm/directory/index.js": "module.exports = 2;",
     "esm/explicit.js.js": "module.exports = 3;",
     "esm/exact.js": "module.exports = 4;",
+    "esm/actual.cjs": "module.exports = 5;",
+    "esm/typed.mts": 'import value from "./typed-dep.js"; void value;',
+    "esm/typed-dep.ts": "export default 42;",
     "cjs/entry.cjs": [
       'require("./extensionless");',
+      'require("./directory");',
       'require("./feature");',
       'require("./feature.cjs");',
+      'require("./module-only");',
+      'require("./valid-directory");',
       'require("./default-js");',
       'require("./default-json");',
       'require("./default-node");',
@@ -45,8 +55,14 @@ const createModuleLookupFixture = async () => {
       'require("ancestor-blocked");',
       'require("ancestor-sub/parser");',
     ].join("\n"),
+    "cjs/directory/index.cjs": "module.exports = 6;",
     "cjs/extensionless.cjs": "module.exports = 1;",
     "cjs/feature.cjs": "module.exports = 2;",
+    "cjs/module-only.mjs": "export default 42;",
+    "cjs/valid-directory/index.js": "module.exports = 42;",
+    "cjs/typed.cts":
+      'const value = require("./typed-dep.cjs"); module.exports = value;',
+    "cjs/typed-dep.cts": "module.exports = 42;",
     "cjs/default-js.js": "module.exports = 3;",
     "cjs/default-json.json": JSON.stringify({ value: 4 }),
     // Inventory-only placeholder: never pass this path to Node's runtime.
@@ -63,19 +79,19 @@ const createModuleLookupFixture = async () => {
     "node_modules/ancestor-blocked/index.js": "module.exports = 9;",
     "node_modules/ancestor-sub/parser.js": "module.exports = 10;",
     "esm/runtime-control.mjs": [
-      'const specifiers = ["./extensionless", "./directory", "./explicit.js", "./exact.js", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser"];',
+      'const specifiers = ["./extensionless", "./directory", "./explicit.js", "./exact.js", "./actual.cjs?cache=1", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser"];',
       "const results = [];",
       "for (const specifier of specifiers) {",
-      "  try { await import(specifier); results.push({ specifier, ok: true }); }",
+      "  try { const value = (await import(specifier)).default; results.push({ specifier, ok: true, value }); }",
       "  catch (error) { results.push({ specifier, ok: false, code: error.code }); }",
       "}",
       "console.log(JSON.stringify(results));",
     ].join("\n"),
     "cjs/runtime-control.cjs": [
-      'const specifiers = ["./extensionless", "./feature", "./feature.cjs", "./default-js", "./default-json", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser"];',
+      'const specifiers = ["./extensionless", "./directory", "./feature", "./feature.cjs", "./module-only", "./valid-directory", "./default-js", "./default-json", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser"];',
       "const results = [];",
       "for (const specifier of specifiers) {",
-      "  try { require(specifier); results.push({ specifier, ok: true }); }",
+      "  try { const value = require(specifier); results.push({ specifier, ok: true, value }); }",
       "  catch (error) { results.push({ specifier, ok: false, code: error.code }); }",
       "}",
       "console.log(JSON.stringify(results));",
@@ -111,11 +127,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       readonly specifier: string;
       readonly ok: boolean;
       readonly code?: string;
+      readonly value?: unknown;
     }>;
     const cjsResults = JSON.parse(cjsControl.stdout) as Array<{
       readonly specifier: string;
       readonly ok: boolean;
       readonly code?: string;
+      readonly value?: unknown;
     }>;
     expect(esmResults).toEqual([
       {
@@ -133,8 +151,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ok: false,
         code: "ERR_MODULE_NOT_FOUND",
       },
-      { specifier: "./exact.js", ok: true },
-      { specifier: "empty-main", ok: true },
+      { specifier: "./exact.js", ok: true, value: 4 },
+      { specifier: "./actual.cjs?cache=1", ok: true, value: 5 },
+      { specifier: "empty-main", ok: true, value: 42 },
       { specifier: "nested-main", ok: false, code: "ERR_MODULE_NOT_FOUND" },
       { specifier: "file-only", ok: false, code: "ERR_MODULE_NOT_FOUND" },
       { specifier: "ancestor-empty", ok: false, code: "ERR_MODULE_NOT_FOUND" },
@@ -156,19 +175,26 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         code: "MODULE_NOT_FOUND",
       },
       {
+        specifier: "./directory",
+        ok: false,
+        code: "MODULE_NOT_FOUND",
+      },
+      {
         specifier: "./feature",
         ok: false,
         code: "MODULE_NOT_FOUND",
       },
-      { specifier: "./feature.cjs", ok: true },
-      { specifier: "./default-js", ok: true },
-      { specifier: "./default-json", ok: true },
-      { specifier: "empty-main", ok: true },
+      { specifier: "./feature.cjs", ok: true, value: 2 },
+      { specifier: "./module-only", ok: false, code: "MODULE_NOT_FOUND" },
+      { specifier: "./valid-directory", ok: true, value: 42 },
+      { specifier: "./default-js", ok: true, value: 3 },
+      { specifier: "./default-json", ok: true, value: { value: 4 } },
+      { specifier: "empty-main", ok: true, value: 42 },
       { specifier: "nested-main", ok: false, code: "MODULE_NOT_FOUND" },
-      { specifier: "file-only", ok: true },
-      { specifier: "ancestor-empty", ok: true },
+      { specifier: "file-only", ok: true, value: 7 },
+      { specifier: "ancestor-empty", ok: true, value: 8 },
       { specifier: "ancestor-blocked", ok: false, code: "MODULE_NOT_FOUND" },
-      { specifier: "ancestor-sub/parser", ok: true },
+      { specifier: "ancestor-sub/parser", ok: true, value: 10 },
     ]);
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
@@ -177,6 +203,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["import", "./directory", null, "not-found"],
       ["import", "./explicit.js", null, "not-found"],
       ["import", "./exact.js", "esm/exact.js", "resolved"],
+      ["import", "./actual.cjs?cache=1", "esm/actual.cjs", "resolved"],
+      ["import", "./typed-dep.js", "esm/typed-dep.ts", "resolved"],
       ["import", "empty-main", "node_modules/empty-main/index.js", "resolved"],
       ["import", "nested-main", null, "not-found"],
       ["import", "file-only", null, "external"],
@@ -184,8 +212,17 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["import", "ancestor-blocked", null, "not-found"],
       ["import", "ancestor-sub/parser", null, "not-found"],
       ["require", "./extensionless", null, "not-found"],
+      ["require", "./directory", null, "not-found"],
       ["require", "./feature", null, "not-found"],
       ["require", "./feature.cjs", "cjs/feature.cjs", "resolved"],
+      ["require", "./module-only", null, "not-found"],
+      [
+        "require",
+        "./valid-directory",
+        "cjs/valid-directory/index.js",
+        "resolved",
+      ],
+      ["require", "./typed-dep.cjs", "cjs/typed-dep.cts", "resolved"],
       ["require", "./default-js", "cjs/default-js.js", "resolved"],
       ["require", "./default-json", "cjs/default-json.json", "resolved"],
       ["require", "./default-node", "cjs/default-node.node", "resolved"],
