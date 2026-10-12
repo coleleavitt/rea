@@ -173,15 +173,11 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         await completeJavaScriptAnalysisSteps(steps, signal);
         continue;
       }
-      const result = await worker.analyze(
-        file,
-        projection.remainingFileNodeBudget(),
-        signal,
-      );
+      const result = await worker.analyze(file, signal);
       const facts = result.ok ? result.value : result.error;
       const applicationProjectionFailure = facts.applicationProjectionFailure;
       if (facts.projection !== null)
-        projection.adoptFileProjection(facts.projection);
+        projection.adoptFileProjection(file, facts.projection);
       const error = result.ok ? null : result.error.error;
       const limits =
         error instanceof AnalysisResourceConstraintError
@@ -346,6 +342,15 @@ const finalizeArtifactAnalysis = <
           [analysis_failure, application_projection_failure].flatMap(
             (failure) => (failure === undefined ? [] : [failure.reason]),
           ),
+      ),
+      ...state.files.flatMap(({ file, javascript }) =>
+        javascript === null ||
+        javascript.parse_status === "failed" ||
+        javascript.constant_folding.status === "available"
+          ? []
+          : [
+              `${file.path}: Constant folding was unavailable (${javascript.constant_folding.reason}); only literal syntax supplied static values.`,
+            ],
       ),
     ],
   };

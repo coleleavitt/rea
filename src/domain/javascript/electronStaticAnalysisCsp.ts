@@ -10,6 +10,10 @@ import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import { argumentNode, range } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
+import {
+  staticConstantString,
+  type JavaScriptStaticConstantReader,
+} from "./javascriptStaticConstants.js";
 
 const HEADER = /^content-security-policy(?:-report-only)?$/iu;
 const META =
@@ -34,13 +38,14 @@ export const inspectContentSecurityPolicyNode = (
   context: JavaScriptFindingContext,
 ): void => {
   const consumed = context.accumulator.policyNodes;
+  const { constants } = context;
   if (consumed.has(node)) return;
   if (t.isObjectProperty(node) || t.isAssignmentExpression(node)) {
     const header = headerName(node);
     if (header === undefined) return;
     const value = t.isObjectProperty(node) ? node.value : node.right;
     markConsumed(value, consumed);
-    const policy = policyText(value);
+    const policy = policyText(value, constants);
     addPolicy(context, node, {
       mechanism: "header-property",
       header: header.toLowerCase(),
@@ -52,7 +57,7 @@ export const inspectContentSecurityPolicyNode = (
     return;
   }
   if (isDirectiveJoin(node)) {
-    const policy = policyText(node);
+    const policy = policyText(node, constants);
     if (policy === undefined || !CANDIDATE.test(policy.text)) return;
     markConsumed(node, consumed);
     addPolicy(context, node, {
@@ -64,8 +69,19 @@ export const inspectContentSecurityPolicyNode = (
     });
     return;
   }
-  if (!t.isStringLiteral(node) && !t.isTemplateLiteral(node)) return;
-  const policy = policyText(node);
+  if (t.isStringLiteral(node) || t.isTemplateLiteral(node))
+    inspectPolicyLiteral(node, context);
+};
+
+const inspectPolicyLiteral = (
+  node: t.StringLiteral | t.TemplateLiteral,
+  context: JavaScriptFindingContext,
+): void => {
+  const spelled = t.isStringLiteral(node)
+    ? node.value
+    : node.quasis.map(({ value }) => value.raw).join(" ");
+  if (!CANDIDATE.test(spelled)) return;
+  const policy = policyText(node, context.constants);
   if (policy === undefined || !CANDIDATE.test(policy.text)) return;
   const metas = [...policy.text.matchAll(META)];
   if (metas.length === 0) {
@@ -148,8 +164,15 @@ const isDirectiveJoin = (node: t.Node): node is t.CallExpression =>
   semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
     "join";
 
-const policyText = (node: t.Node): PolicyText | undefined => {
-  if (t.isStringLiteral(node)) return { text: node.value, dynamicParts: 0 };
+// Whole values come from the shared constant evaluator. Only a partly
+// computed template, join, or concatenation is assembled here, keeping each
+// runtime part as a placeholder that the evaluator cannot represent.
+const policyText = (
+  node: t.Node,
+  constants: JavaScriptStaticConstantReader,
+): PolicyText | undefined => {
+  const constant = staticConstantString(constants(node));
+  if (constant !== undefined) return { text: constant, dynamicParts: 0 };
   if (t.isTemplateLiteral(node)) {
     const cooked = node.quasis.map(({ value }) => value.cooked);
     if (cooked.some((part) => part === null || part === undefined))
@@ -163,46 +186,45 @@ const policyText = (node: t.Node): PolicyText | undefined => {
     const [only] = node.elements;
     return only === null || only === undefined || t.isSpreadElement(only)
       ? undefined
-      : policyText(only);
+      : policyText(only, constants);
   }
-  if (isDirectiveJoin(node)) {
-    const separator = argumentNode(node.arguments[0]);
-    const joiner =
-      separator === undefined
-        ? ","
-        : t.isStringLiteral(separator)
-          ? separator.value
-          : undefined;
-    if (joiner === undefined || !t.isMemberExpression(node.callee))
-      return undefined;
-    const array = node.callee.object;
-    if (!t.isArrayExpression(array)) return undefined;
-    const parts = array.elements.map((element) =>
-      element === null || t.isSpreadElement(element)
-        ? undefined
-        : policyText(element),
-    );
-    if (parts.some((part) => part === undefined)) return undefined;
-    const known = parts.filter(
-      (part): part is PolicyText => part !== undefined,
-    );
-    return {
-      text: known.map(({ text }) => text).join(joiner),
-      dynamicParts: known.reduce(
-        (sum, { dynamicParts }) => sum + dynamicParts,
-        0,
-      ),
-    };
-  }
+  if (isDirectiveJoin(node)) return joinedPolicyText(node, constants);
   if (t.isBinaryExpression(node, { operator: "+" })) {
-    const left = policyText(node.left);
-    const right = policyText(node.right);
+    const left = policyText(node.left, constants);
+    const right = policyText(node.right, constants);
     return {
       text: `${left?.text ?? DYNAMIC_SOURCE}${right?.text ?? DYNAMIC_SOURCE}`,
       dynamicParts: (left?.dynamicParts ?? 1) + (right?.dynamicParts ?? 1),
     };
   }
   return undefined;
+};
+
+const joinedPolicyText = (
+  node: t.CallExpression,
+  constants: JavaScriptStaticConstantReader,
+): PolicyText | undefined => {
+  const separator = argumentNode(node.arguments[0]);
+  const joiner =
+    separator === undefined ? "," : staticConstantString(constants(separator));
+  if (joiner === undefined || !t.isMemberExpression(node.callee))
+    return undefined;
+  const array = node.callee.object;
+  if (!t.isArrayExpression(array)) return undefined;
+  const parts = array.elements.map((element) =>
+    element === null || t.isSpreadElement(element)
+      ? undefined
+      : policyText(element, constants),
+  );
+  if (parts.some((part) => part === undefined)) return undefined;
+  const known = parts.filter((part): part is PolicyText => part !== undefined);
+  return {
+    text: known.map(({ text }) => text).join(joiner),
+    dynamicParts: known.reduce(
+      (sum, { dynamicParts }) => sum + dynamicParts,
+      0,
+    ),
+  };
 };
 
 // Literals inside a recognized policy are not reported again on their own.

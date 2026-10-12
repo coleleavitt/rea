@@ -294,7 +294,16 @@ export function* collectSemanticMemberMutationsSteps(
         for (const value of effect === "escape"
           ? escapedReferenceLeaves(expression, current.path)
           : expandedValues(expression, current.path, effect)) {
-          if (value.iterableFallbackPath !== undefined)
+          if (value.escapes === true && effect !== "escape")
+            markValue(
+              value.node,
+              value.path,
+              new Set(),
+              "escape",
+              mutation,
+              current.originAt,
+            );
+          else if (value.iterableFallbackPath !== undefined)
             deferIterable({
               node: value.node,
               projection: [],
@@ -555,6 +564,8 @@ interface ReferencedValue {
   readonly node: t.Node;
   readonly path: PropertyPath;
   readonly iterableFallbackPath?: PropertyPath;
+  /** The value may be reached at any depth below `path`; record an escape. */
+  readonly escapes?: true;
 }
 
 interface IterableReference extends ReferencedValue {

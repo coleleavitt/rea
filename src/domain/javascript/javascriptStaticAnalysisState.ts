@@ -1,5 +1,6 @@
 import type * as t from "@babel/types";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptStaticConstantReader } from "./javascriptStaticConstants.js";
 
 import type {
   JavaScriptBundlerRegistration,
@@ -58,6 +59,8 @@ export interface JavaScriptAnalysisAccumulator {
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** `preload` attributes of audio and video elements, which are not scripts. */
   readonly mediaElementPreloads: WeakSet<t.Node>;
+  /** Value expressions already reported as call-site or route endpoints. */
+  readonly consumedValueNodes: WeakSet<t.Node>;
   readonly seen: Set<string>;
   visitedNodes: number;
   unknownFindings: number;
@@ -92,6 +95,8 @@ export interface JavaScriptElectronSemanticFacts {
 export interface JavaScriptFindingContext {
   readonly rpcScan: JavaScriptRpcScan;
   readonly source: string;
+  /** Exact literal or derived values of finding expressions. */
+  readonly constants: JavaScriptStaticConstantReader;
   readonly accumulator: JavaScriptAnalysisAccumulator;
   readonly openReceiverFacts?: ReadonlyMap<
     number,
@@ -118,6 +123,7 @@ export interface JavaScriptEndpointInput {
   readonly node: t.Node;
   readonly kind: JavaScriptStaticEndpoint["kind"];
   readonly value: string;
+  readonly expression: string | null;
   readonly mechanism: string;
 }
 
@@ -152,6 +158,7 @@ export const createJavaScriptAnalysisAccumulator = (
   policyNodes: new WeakSet(),
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   mediaElementPreloads: new WeakSet(),
+  consumedValueNodes: new WeakSet(),
   seen: new Set(),
   visitedNodes: 0,
   unknownFindings: 0,

@@ -42,7 +42,7 @@ export const inspectElectronWebviewNode = (
   const kind = handler === undefined ? "missing" : handlerKind(handler);
   const examined =
     kind === "inline-function" && t.isFunction(handler)
-      ? collectWrites(handler, context.source)
+      ? collectWrites(handler, context)
       : { writes: [], unknown: 1, preload: undefined };
   context.accumulator.unknownFindings += examined.unknown;
   const preload = examined.preload;
@@ -71,7 +71,7 @@ export const inspectElectronWebviewNode = (
 // parameters. Nested functions that rebind either name are not followed.
 const collectWrites = (
   handler: t.Function,
-  source: string,
+  context: JavaScriptFindingContext,
 ): {
   readonly writes: readonly ElectronWebviewAttachWrite[];
   readonly unknown: number;
@@ -114,7 +114,7 @@ const collectWrites = (
             target,
             name,
             operation: write.operation,
-            value: writtenValue(name, write.value, source),
+            value: writtenValue(name, write.value, context),
             location: range(node),
           });
       }
@@ -132,12 +132,12 @@ const collectWrites = (
 const writtenValue = (
   name: string,
   value: t.Expression | undefined,
-  source: string,
+  context: JavaScriptFindingContext,
 ): ElectronWebviewAttachWrite["value"] => {
   if (value === undefined) return null;
   const path = name === "preload" ? staticPath(value) : undefined;
   return path === undefined
-    ? electronStaticValue(source, value)
+    ? electronStaticValue(context, value)
     : { status: "literal", value: path, expression: null };
 };
 

@@ -162,7 +162,7 @@ const expectWindowsAndWebviews = (graph: Graph): void => {
     web_preferences: expect.arrayContaining([
       {
         name: "sandbox",
-        value: { status: "literal", value: true, expression: null },
+        value: { status: "derived", value: true, expression: "!0" },
       },
     ]),
     preload_path: "preload.cjs",

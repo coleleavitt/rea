@@ -131,7 +131,24 @@ After projection, it retains only the lexical module facts and exported return
 shapes needed to build application relationships. Full source IR does not stay
 resident for every file together. Callable ownership and contained-reference
 queries use per-file range indexes, while call sites use exact-range lookups.
-Existing node budgets and coverage reporting remain in effect.
+
+Semantic facts are bounded by serialized bytes, not node counts. One
+application Evidence may occupy the running heap divided by twelve, at most
+one V8 string: a consumer such as `compare_application_versions` holds two
+records, and measured consumers peak at about six times the Evidence bytes.
+Each source is offered the remaining budget in proportion to its share of the
+unanalyzed source bytes, also capped by the parent's free result heap. Within
+a source, nodes enter the graph when an admitted relation, fingerprint, or
+unknown frontier references them; relations are offered in projection order,
+then fingerprints, unknown frontiers, and unreferenced nodes. The first
+refusal closes that source, which keeps a connected source-ordered prefix.
+
+`semantic_graph.coverage.files` reports each source's status (`complete`,
+`truncated`, or `unavailable`), its byte budget, retained bytes, exact omitted
+node, relation, and fingerprint counts, and exact unknown-frontier totals by
+family and reason. Families report retained and omitted unknown counts. Page
+`semantic_files` or `semantic_unknowns` with `inspect_analysis_view`, or select
+one source with `source_paths` to give it the whole budget.
 
 Progress identifies the source file being parsed and projected. Cancellation is
 checked between files and throughout result transfer. The owned analyzer can
@@ -292,8 +309,7 @@ Selected bounded text is then parsed as inert data to recover:
 - explicit `BrowserWindow`, `BrowserView`, and `WebContentsView` options and
   `webPreferences`, including statically resolvable preload entrypoints. The
   finding's `api` names the constructor; views become `web-contents-view`
-  graph nodes. Minified booleans such as `!0` and `!1` are read as `true` and
-  `false`;
+  graph nodes;
 - `will-attach-webview` listeners (`on`, `once`, `addListener`,
   `prependListener`) with an inline handler: writes and deletions through its
   `webPreferences` and `params` parameters, in source order, and the last
@@ -335,6 +351,31 @@ Selected bounded text is then parsed as inert data to recover:
   (`resolution_basis: loader-package-root`); exactly one candidate resolves the
   binding with low confidence. Members read from a loader result are not
   followed.
+
+Electron option values, IPC channels, contextBridge keys, sender checks, and
+network endpoint arguments are read through the semantic value lattice.
+Literal syntax reports `literal`. A value folded from constant operators
+(`!0`, `void`, `typeof`, arithmetic, comparison, `+`, templates,
+`[...].join(sep)`, `String.fromCharCode(...)`) or read through a binding with a
+single initializer reports the exact value with its source expression: status
+`derived` for Electron values, and both the value and its `*_expression` for
+channels, keys, and endpoints. IPC pairing treats derived channels as exact and
+marks the pairing basis `unique-exact-derived-channel`. Only JSON primitives
+become values: `void 0` and `1/0` alone stay dynamic, though they fold as
+operands. Folding assumes the unmodified `String.fromCharCode` and
+`Array.prototype.join` built-ins. If member-write recovery for a file exceeds a
+resource limit, that file reports literal values only and records the reason.
+
+URL-like strings in data are reported as `data` endpoints alongside `route`
+and `network` endpoints, which are consumed at a recognized route or call site.
+Data endpoints come from string literals and object keys, template text, and
+maximal folded expressions. Each endpoint carries `url_class` (`http`,
+`websocket`, `host`, `path`, `data`, `blob`, or `file`), `host`, and, for data
+values, `property_path` from the nearest named container, such as
+`["Voice", "DIALABLE_ORIGIN"]` or `["PROVIDERS", "Map()", "0", "0", "0"]`.
+Host-only values must be lowercase DNS names under a two-letter IANA country
+code or a common generic top-level domain; this classification is syntactic,
+so dotted identifiers can still match.
 
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,

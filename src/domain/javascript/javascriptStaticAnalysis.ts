@@ -40,8 +40,11 @@ import {
   classifyParsedJavaScriptElectronBindingsSteps,
   classifyParsedJavaScriptRpcClientRootsSteps,
   classifyParsedJavaScriptOpenReceivers,
+  createParsedJavaScriptValueEvaluatorSteps,
   type JavaScriptOpenReceiverFact,
 } from "./javascriptSemanticAnalysis.js";
+import { createJavaScriptStaticConstantReader } from "./javascriptStaticConstants.js";
+import { inspectDataEndpointNode } from "./javascriptStaticDataEndpoints.js";
 import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -82,15 +85,26 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   const electron = yield* classifyParsedJavaScriptElectronBindingsSteps(file);
   const clientRoots = yield* classifyParsedJavaScriptRpcClientRootsSteps(file);
+  const evaluation = yield* createParsedJavaScriptValueEvaluatorSteps(file);
   yield* traverseStaticSourceSteps(file, {
     source,
+    constants: createJavaScriptStaticConstantReader(
+      evaluation.status === "available" ? evaluation.evaluate : undefined,
+    ),
     accumulator,
     ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
     electron,
     rpcScan: createJavaScriptRpcScan(source, clientRoots),
   });
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator);
+  return finalizeStaticAnalysis(
+    source,
+    file,
+    accumulator,
+    evaluation.status === "available"
+      ? { status: "available" }
+      : { status: "unavailable", reason: evaluation.reason },
+  );
 }
 
 function* traverseStaticSourceSteps(
@@ -98,9 +112,10 @@ function* traverseStaticSourceSteps(
   findings: JavaScriptFindingContext,
 ): Generator<void, void> {
   yield* traverseJavaScriptAstSteps(file, {
-    enter: (node) => {
+    enter: (node, parent, readAncestors) => {
       findings.accumulator.visitedNodes += 1;
       inspectNode(node, findings);
+      inspectDataEndpointNode(node, parent, readAncestors, findings);
       return undefined;
     },
   });
@@ -110,6 +125,7 @@ const finalizeStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
+  constantFolding: JavaScriptStaticAnalysis["constant_folding"],
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
@@ -194,6 +210,7 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    constant_folding: constantFolding,
     limitations,
   };
 };
