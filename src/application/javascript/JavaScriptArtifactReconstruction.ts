@@ -150,7 +150,7 @@ export const reconstructJavaScriptArtifact = async (
         },
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
-        ).length,
+        ),
       );
       let outcome;
       let cleanupFailure: AnalysisError | undefined;
@@ -225,6 +225,7 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraphSteps = semanticProjection.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         graph,
+        worker.coverageLimits(),
       );
       await reportCompletedPhase(
         "seal_javascript_semantic_graph",

@@ -6,7 +6,10 @@ import {
 } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
-import { measureJavaScriptModuleTransfer } from "../javascript/analysis/JavaScriptAnalysisTransfer.js";
+import {
+  javaScriptGraphBytesWithinRetention,
+  measureJavaScriptModuleTransfer,
+} from "../javascript/analysis/JavaScriptAnalysisTransfer.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectJavaScriptSemanticFileSteps } from "../application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { completeJavaScriptAnalysisSteps } from "../application/javascript/JavaScriptAnalysisControl.js";
@@ -15,11 +18,7 @@ import {
   type JavaScriptSourceWorkerAnalyzer,
 } from "../javascript/analysis/JavaScriptAnalysisWorkerServer.js";
 
-const analyze: JavaScriptSourceWorkerAnalyzer = async (
-  file,
-  nodeBudget,
-  callbacks,
-) => {
+const analyze: JavaScriptSourceWorkerAnalyzer = async (file, callbacks) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
   await callbacks.phase("parse");
@@ -39,7 +38,8 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       receivers,
     ),
   );
-  const resultBudgetBytes = await callbacks.checkpoint(facts);
+  const admission = await callbacks.checkpoint(facts);
+  const resultBudgetBytes = admission.resultBytes;
   if (facts.parse_status === "failed") return null;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
@@ -67,7 +67,16 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     );
   await callbacks.phase("projection");
   const projection = await completeJavaScriptAnalysisSteps(
-    projectJavaScriptSemanticFileSteps(file, ir, nodeBudget),
+    projectJavaScriptSemanticFileSteps(
+      file,
+      ir,
+      Math.min(
+        admission.graphBytes,
+        javaScriptGraphBytesWithinRetention(
+          resultBudgetBytes - measured.retentionBytes,
+        ),
+      ),
+    ),
   );
   return { module, projection };
 };

@@ -161,6 +161,15 @@ const javascriptUnknowns = (
   return unknowns;
 };
 
+const semanticFileStatusCounts = (
+  analysis: JavaScriptApplicationAnalysisResult,
+): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const { status } of analysis.semantic_graph.coverage.files)
+    counts[status] = (counts[status] ?? 0) + 1;
+  return counts;
+};
+
 const parentFields = (
   parent: AnalysisViewParent,
   analysis: JavaScriptApplicationAnalysisResult,
@@ -266,12 +275,7 @@ export const projectJavaScriptApplicationView = (
           application: analysis.graph.coverage,
           semantic: {
             ...analysis.semantic_graph.coverage,
-            families: analysis.semantic_graph.coverage.families.map(
-              ({ unknown_ids, ...family }) => ({
-                ...family,
-                unknown_count: unknown_ids.length,
-              }),
-            ),
+            files: semanticFileStatusCounts(analysis),
           },
           application_unknowns: applicationUnknownCount(analysis),
           semantic_unknowns: analysis.semantic_graph.unknowns.length,

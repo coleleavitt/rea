@@ -59,6 +59,17 @@ export const javaScriptTransferRetentionBytes = (
   records: number,
 ): number => bytes * 2 + records * 64;
 
+/**
+ * Serialized semantic-fact bytes whose transfer rows fit a retention budget.
+ *
+ * Each row adds at most 32 bytes of framing and 64 bytes of retained overhead
+ * to a fact of at least 100 serialized bytes, so retention stays below four
+ * times the fact bytes.
+ */
+export const javaScriptGraphBytesWithinRetention = (
+  retentionBytes: number,
+): number => Math.max(0, Math.floor(retentionBytes / 4));
+
 const encodeTransferRecord = (input: unknown, previousBytes: number) => {
   const record = recordSchema.parse(input);
   const line = `${JSON.stringify(record)}\n`;
@@ -157,7 +168,7 @@ export const writeJavaScriptAnalysisTransfer = async (
   try {
     await append({
       kind: "projection-header",
-      value: { roots: projection.roots, truncated: projection.truncated },
+      value: { roots: projection.roots, coverage: projection.coverage },
     });
     for (const record of moduleTransferRecords(module)) await append(record);
     for (const value of projection.evidenceContexts)

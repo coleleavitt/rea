@@ -5,9 +5,13 @@ import {
   type JavaScriptSemanticGraph,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type {
+  JavaScriptSemanticFileCoverage,
+  JavaScriptSemanticFileProjectionCoverage,
   JavaScriptSemanticFingerprint,
   JavaScriptSemanticGraphNode,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { SemanticFileGraphBudget } from "./JavaScriptSemanticFileGraphBudget.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
@@ -61,6 +65,7 @@ import {
   retainSemanticGraphNode as retainNode,
   addSemanticGraphRelation as addRelation,
   createSemanticGraphProjectionState as emptyState,
+  finishSemanticFileBudget,
   bindSemanticGraphApplicationNodes,
   type SemanticGraphProjectionState as BuilderState,
 } from "./JavaScriptSemanticGraphConstruction.js";
@@ -92,35 +97,6 @@ interface FileContext extends SemanticFlowProjectionContext {
   >;
 }
 
-/**
- * Resource-safety ceiling on retained semantic nodes.
- *
- * The semantic projection emits one node per AST expression, call site, binding
- * and property slot. That is unbounded in input size. A small tree of five files
- * already yields on the order of 170,000 nodes, and larger trees yield millions,
- * exhausting the heap before the result can be serialized.
- *
- * This is a real resource-safety constraint, not a presentation preference, so
- * the ceiling is applied and reported through the graph's own `coverage` fields
- * (`truncated`, `omitted_nodes`, `omitted_relations`, `limits`) rather than
- * silently dropping data.
- *
- * Sizing: a retained semantic node costs roughly 3 KB once serialized, and V8
- * additionally caps a single string at 512 MB. The result is serialized after the
- * object graph is built and validated, so both phases must fit together. A single
- * minified vendor bundle can account for most of a tree's nodes, so a whole-tree
- * ceiling without a per-file ceiling does not bound the work. Both are applied.
- */
-export const SEMANTIC_GRAPH_NODE_CEILING = 100_000;
-
-/**
- * Per-file share of the semantic node budget.
- *
- * Bound each source file independently so one large bundled library cannot
- * consume the whole tree's budget and starve the application's own modules.
- */
-export const SEMANTIC_GRAPH_FILE_NODE_CEILING = 20_000;
-
 export const buildJavaScriptSemanticGraph = ({
   rootArtifactSha256,
   applicationGraph,
@@ -141,15 +117,14 @@ export const buildJavaScriptSemanticGraph = ({
         "incomplete-module",
       );
   }
-  return projection.finish(rootArtifactSha256, applicationGraph);
+  return projection.finish(rootArtifactSha256, applicationGraph, []);
 };
 
 /** File-local semantic projection that does not retain consumed source IR. */
 export interface JavaScriptSemanticGraphProjection {
-  /** Node capacity offered to the next independently analyzed source file. */
-  readonly remainingFileNodeBudget: () => number;
   /** Adopt decoded file-local facts; final validation and proof remain in this realm. */
   readonly adoptFileProjection: (
+    file: JavaScriptArtifactFile,
     projection: JavaScriptSemanticFileProjection,
   ) => void;
   /** Preserve source-bound unknowns for an execution or result-retention failure. */
@@ -159,22 +134,26 @@ export interface JavaScriptSemanticGraphProjection {
     limits: Readonly<Record<string, JsonValue>> | null,
     unknownReason: "resource-limit" | "incomplete-module",
   ) => void;
+  /** Project one file without a byte budget. */
   readonly projectFile: (
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
   ) => void;
-  /** Project one file in steps between its projection passes. */
+  /** Project one unbudgeted file in steps between its projection passes. */
   readonly projectFileSteps: (
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
   ) => Generator<void, void>;
+  /** `budgetLimits` name the limits that offered each truncated file its budget. */
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
+    budgetLimits: ApplicationCoverage["limits"],
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
+    budgetLimits: ApplicationCoverage["limits"],
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
@@ -183,7 +162,7 @@ export const createJavaScriptSemanticGraphProjection =
   (): JavaScriptSemanticGraphProjection => {
     const state = emptyState();
     const fingerprints: JavaScriptSemanticFingerprint[] = [];
-    let truncatedFiles = 0;
+    const files: JavaScriptSemanticFileCoverage[] = [];
     let unavailableFiles = 0;
     let resourceTruncatedFiles = 0;
     const executionLimits = new Map<
@@ -194,28 +173,20 @@ export const createJavaScriptSemanticGraphProjection =
       file: JavaScriptArtifactFile,
       ir: JavaScriptSemanticIr,
     ): Generator<void, void> {
-      if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
-        truncatedFiles += 1;
-        return;
-      }
-      const remainingTreeBudget =
-        SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size;
-      state.fileNodeBudget = Math.min(
-        SEMANTIC_GRAPH_FILE_NODE_CEILING,
-        remainingTreeBudget,
+      const projected = yield* projectBudgetedFileSteps(
+        file,
+        ir,
+        state,
+        new SemanticFileGraphBudget(null),
       );
-      state.fileNodesDropped = false;
-      fingerprints.push(...(yield* projectFileSteps(file, ir, state)));
-      // Nodes were dropped only if the budget actually blocked creation. A file
-      // that exactly fills its share ends with a zero budget without dropping
-      // anything, so the remaining budget alone cannot decide truncation.
-      if (state.fileNodesDropped) truncatedFiles += 1;
-      state.fileNodeBudget = null;
+      fingerprints.push(...projected.fingerprints);
+      files.push(fileCoverage(file, projected.coverage));
     };
     const finishWith = <Value>(
       factory: (input: unknown) => Value,
       rootArtifactSha256: string,
       applicationGraph: BuilderInput["applicationGraph"],
+      budgetLimits: ApplicationCoverage["limits"],
     ): Value => {
       bindSemanticGraphApplicationNodes(state, applicationGraph);
       if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
@@ -223,17 +194,37 @@ export const createJavaScriptSemanticGraphProjection =
       const unknowns = [...state.unknowns.values()];
       type Family = (typeof JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)[number];
       const retainedByFamily = new Map<Family, number>();
-      const unknownIdsByFamily = new Map<Family, string[]>();
+      const unknownsByFamily = new Map<Family, number>();
+      const omittedUnknownsByFamily = new Map<Family, number>();
       for (const relation of relations) {
         const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
         retainedByFamily.set(family, (retainedByFamily.get(family) ?? 0) + 1);
       }
-      for (const unknown of unknowns) {
-        const identifiers = unknownIdsByFamily.get(unknown.family);
-        if (identifiers === undefined)
-          unknownIdsByFamily.set(unknown.family, [unknown.unknown_id]);
-        else identifiers.push(unknown.unknown_id);
-      }
+      for (const unknown of unknowns)
+        unknownsByFamily.set(
+          unknown.family,
+          (unknownsByFamily.get(unknown.family) ?? 0) + 1,
+        );
+      for (const coverage of files)
+        for (const count of coverage.unknowns)
+          omittedUnknownsByFamily.set(
+            count.family,
+            (omittedUnknownsByFamily.get(count.family) ?? 0) +
+              count.total -
+              count.retained,
+          );
+      const truncatedFiles = files.filter(
+        ({ status }) => status === "truncated",
+      ).length;
+      const exactNodes = unavailableFiles === 0;
+      const exactRelations =
+        exactNodes &&
+        files.every(({ omitted_relations: omitted }) => omitted !== null);
+      const sortedFiles = [...files].sort(
+        (left, right) =>
+          compareUnicodeCodePoints(left.module_path, right.module_path) ||
+          compareUnicodeCodePoints(left.artifact_sha256, right.artifact_sha256),
+      );
       const graph = factory({
         schema: "JavaScriptSemanticRelationGraph",
         root_artifact_sha256: rootArtifactSha256,
@@ -249,29 +240,34 @@ export const createJavaScriptSemanticGraphProjection =
           status:
             truncatedFiles > 0 || unavailableFiles > 0 ? "partial" : "unknown",
           truncated: truncatedFiles > 0 || resourceTruncatedFiles > 0,
-          omitted_nodes: truncatedFiles > 0 || unavailableFiles > 0 ? null : 0,
-          omitted_relations:
-            truncatedFiles > 0 || unavailableFiles > 0 ? null : 0,
+          omitted_nodes: exactNodes
+            ? files.reduce(
+                (total, { omitted_nodes: omitted }) => total + (omitted ?? 0),
+                0,
+              )
+            : null,
+          omitted_relations: exactRelations
+            ? files.reduce(
+                (total, { omitted_relations: omitted }) =>
+                  total + (omitted ?? 0),
+                0,
+              )
+            : null,
           limits: [
             ...executionLimits.values(),
-            ...(truncatedFiles > 0
-              ? [
-                  {
-                    name: "semantic_graph_node_ceiling",
-                    value: SEMANTIC_GRAPH_NODE_CEILING,
-                    unit: "items" as const,
-                  },
-                ]
-              : []),
+            ...(truncatedFiles > 0 ? budgetLimits : []),
           ],
           families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
             family,
             status: semanticFamilyStatus(family),
             retained_relations: retainedByFamily.get(family) ?? 0,
-            omitted_relations:
-              truncatedFiles > 0 || unavailableFiles > 0 ? null : 0,
-            unknown_ids: unknownIdsByFamily.get(family) ?? [],
+            omitted_relations: truncatedFiles > 0 || !exactNodes ? null : 0,
+            retained_unknowns: unknownsByFamily.get(family) ?? 0,
+            omitted_unknowns: exactNodes
+              ? (omittedUnknownsByFamily.get(family) ?? 0)
+              : null,
           })),
+          files: sortedFiles,
         },
         limitations: [
           "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
@@ -285,6 +281,11 @@ export const createJavaScriptSemanticGraphProjection =
           "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
           "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
           "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+          ...(truncatedFiles > 0
+            ? [
+                "Sources whose semantic facts exceeded their serialized byte budget keep a source-ordered prefix; coverage.files reports exact omitted counts. Select one source with source_paths to give it the whole budget.",
+              ]
+            : []),
         ],
       });
       state.nodes.clear();
@@ -293,38 +294,22 @@ export const createJavaScriptSemanticGraphProjection =
       state.roots.clear();
       state.evidenceContexts.clear();
       fingerprints.length = 0;
+      files.length = 0;
       return graph;
     };
     return {
-      remainingFileNodeBudget: () =>
-        Math.min(
-          SEMANTIC_GRAPH_FILE_NODE_CEILING,
-          Math.max(0, SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size),
-        ),
-      adoptFileProjection: (projection) => {
-        const newNodes = projection.nodes.filter(
-          ({ node_id }) => !state.nodes.has(node_id),
-        );
-        if (
-          newNodes.length >
-          Math.min(
-            SEMANTIC_GRAPH_FILE_NODE_CEILING,
-            SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size,
-          )
-        )
-          throw new RangeError(
-            "Transferred semantic nodes exceed the offered tree capacity",
-          );
+      adoptFileProjection: (file, projection) => {
         for (const context of projection.evidenceContexts)
           state.evidenceContexts.adopt(context);
-        for (const node of newNodes) state.nodes.set(node.node_id, node);
+        for (const node of projection.nodes)
+          state.nodes.set(node.node_id, node);
         for (const relation of projection.relations)
           state.relations.set(relation.relation_id, relation);
         for (const unknown of projection.unknowns)
           state.unknowns.set(unknown.unknown_id, unknown);
         for (const root of projection.roots) state.roots.add(root);
         fingerprints.push(...projection.fingerprints);
-        if (projection.truncated) truncatedFiles += 1;
+        files.push(fileCoverage(file, projection.coverage));
       },
       recordUnavailableFile: (file, reason, limits, unknownReason) => {
         const retainedLimits = javaScriptAnalysisCoverageLimits(limits);
@@ -334,10 +319,6 @@ export const createJavaScriptSemanticGraphProjection =
             limit,
           );
         }
-        state.fileNodeBudget = Math.min(
-          SEMANTIC_GRAPH_FILE_NODE_CEILING,
-          Math.max(0, SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size),
-        );
         const module = retainNode(state, file, {
           kind: "module",
           roleKey: "module",
@@ -345,7 +326,6 @@ export const createJavaScriptSemanticGraphProjection =
           label: file.path,
           functionNodeId: null,
         });
-        state.fileNodeBudget = null;
         if (module !== null) state.roots.add(module.node_id);
         const evidence = {
           ...observedSemanticEvidence(file, null),
@@ -373,6 +353,22 @@ export const createJavaScriptSemanticGraphProjection =
           );
           state.unknowns.set(unknown.unknown_id, unknown);
         }
+        files.push({
+          module_path: file.path,
+          artifact_sha256: file.sha256,
+          status: "unavailable",
+          graph_byte_budget: null,
+          retained_graph_bytes: null,
+          omitted_nodes: null,
+          omitted_relations: null,
+          omitted_fingerprints: null,
+          unknowns: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+            family,
+            reason: unknownReason,
+            total: 1,
+            retained: 1,
+          })),
+        });
         unavailableFiles += 1;
         if (unknownReason === "resource-limit" && retainedLimits.length > 0)
           resourceTruncatedFiles += 1;
@@ -382,48 +378,79 @@ export const createJavaScriptSemanticGraphProjection =
         while (steps.next().done !== true);
       },
       projectFileSteps: projectSourceSteps,
-      finish: (rootArtifactSha256, applicationGraph) =>
+      finish: (rootArtifactSha256, applicationGraph, budgetLimits) =>
         finishWith(
           createJavaScriptSemanticGraph,
           rootArtifactSha256,
           applicationGraph,
+          budgetLimits,
         ),
-      finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
+      finishImmutableSteps: (
+        rootArtifactSha256,
+        applicationGraph,
+        budgetLimits,
+      ) =>
         finishWith(
           sealTransferredJavaScriptSemanticGraphSteps,
           rootArtifactSha256,
           applicationGraph,
+          budgetLimits,
         ),
     };
   };
 
-/** Project one source with the parent's remaining node capacity, retaining no full IR. */
+const fileCoverage = (
+  file: JavaScriptArtifactFile,
+  coverage: JavaScriptSemanticFileProjectionCoverage,
+): JavaScriptSemanticFileCoverage => ({
+  module_path: file.path,
+  artifact_sha256: file.sha256,
+  ...coverage,
+});
+
+/** Project one source within the offered serialized-byte budget (null: unbounded), retaining no full IR. */
 export function* projectJavaScriptSemanticFileSteps(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
-  nodeBudget: number,
+  graphByteBudget: number | null,
 ): Generator<void, JavaScriptSemanticFileProjection> {
-  if (
-    !Number.isSafeInteger(nodeBudget) ||
-    nodeBudget < 0 ||
-    nodeBudget > SEMANTIC_GRAPH_FILE_NODE_CEILING
-  )
-    throw new RangeError(
-      "File semantic projection requires a valid offered node capacity",
-    );
   const state = emptyState();
-  state.fileNodeBudget = nodeBudget;
-  state.fileNodesDropped = false;
-  const fingerprints = yield* projectFileSteps(file, ir, state);
+  const budget = new SemanticFileGraphBudget(graphByteBudget);
+  const projected = yield* projectBudgetedFileSteps(file, ir, state, budget);
   return {
     roots: [...state.roots],
-    evidenceContexts: state.evidenceContexts.contexts,
+    // Refused facts may have interned provenance that no retained fact uses.
+    evidenceContexts: state.evidenceContexts.contexts.filter(({ context_id }) =>
+      budget.references(context_id),
+    ),
     nodes: [...state.nodes.values()],
     relations: [...state.relations.values()],
     unknowns: [...state.unknowns.values()],
-    fingerprints,
-    truncated: Boolean(state.fileNodesDropped),
+    fingerprints: projected.fingerprints,
+    coverage: projected.coverage,
   };
+}
+
+/** Project one file, then offer its fingerprints and deferred unknown frontiers. */
+function* projectBudgetedFileSteps(
+  file: JavaScriptArtifactFile,
+  ir: JavaScriptSemanticIr,
+  state: BuilderState,
+  budget: SemanticFileGraphBudget,
+): Generator<
+  void,
+  {
+    readonly fingerprints: JavaScriptSemanticFingerprint[];
+    readonly coverage: JavaScriptSemanticFileProjectionCoverage;
+  }
+> {
+  state.fileBudget = budget;
+  try {
+    const candidates = yield* projectFileSteps(file, ir, state);
+    return finishSemanticFileBudget(state, budget, candidates);
+  } finally {
+    delete state.fileBudget;
+  }
 }
 
 function* projectFileSteps(
@@ -441,7 +468,7 @@ function* projectFileSteps(
   });
   if (moduleNode === null) return [];
   state.roots.add(moduleNode.node_id);
-  // Node creation keeps source order, which the per-file node budget relies
+  // Node creation keeps source order, which the per-file byte budget relies
   // on; yields between nodes do not change it.
   const callableNodes = new Map<string, JavaScriptSemanticGraphNode>();
   for (const [index, callable] of ir.callables.entries()) {
