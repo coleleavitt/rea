@@ -46,6 +46,21 @@ export const createNativeLoaderClassifier = (
     return undefined;
   };
 
+  const bindings = new Map<string, JavaScriptNativeLoaderCall | null>();
+  const identifierLoader = (
+    node: t.Identifier,
+  ): JavaScriptNativeLoaderCall | undefined => {
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (binding === undefined) return undefined;
+    const cached = bindings.get(binding.bindingId);
+    if (cached !== undefined) return cached ?? undefined;
+    // A cycle through parameter defaults resolves to no loader.
+    bindings.set(binding.bindingId, null);
+    const result = bindingLoader(node, binding);
+    bindings.set(binding.bindingId, result ?? null);
+    return result;
+  };
+
   const bindingLoader = (
     callee: t.Identifier,
     binding: JavaScriptSemanticBindingState,
@@ -67,13 +82,17 @@ export const createNativeLoaderClassifier = (
       binding.kind === "parameter" && binding.definitions.length === 1
         ? parameterDefault(callee, binding.scopeId, state)
         : undefined;
-    const loader = fallback === undefined ? undefined : valueLoader(fallback);
+    const loader =
+      fallback === undefined
+        ? undefined
+        : t.isIdentifier(fallback)
+          ? identifierLoader(fallback)?.loader
+          : valueLoader(fallback);
     return loader === undefined
       ? undefined
       : { loader, basis: "parameter-default" };
   };
 
-  const bindings = new Map<string, JavaScriptNativeLoaderCall | null>();
   return (
     node: t.CallExpression | t.OptionalCallExpression,
   ): JavaScriptNativeLoaderCall | undefined => {
@@ -91,13 +110,7 @@ export const createNativeLoaderClassifier = (
         ? undefined
         : { loader: direct, basis: "direct" };
     }
-    const binding = resolveSemanticBindingState(state, callee, callee.name);
-    if (binding === undefined) return undefined;
-    const cached = bindings.get(binding.bindingId);
-    if (cached !== undefined) return cached ?? undefined;
-    const result = bindingLoader(callee, binding);
-    bindings.set(binding.bindingId, result ?? null);
-    return result;
+    return identifierLoader(callee);
   };
 };
 
