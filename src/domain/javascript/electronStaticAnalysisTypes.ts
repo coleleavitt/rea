@@ -1,4 +1,8 @@
 import type {
+  ContentSecurityPolicyConcern,
+  ContentSecurityPolicyDirective,
+} from "./contentSecurityPolicy.js";
+import type {
   JavaScriptSourceRange,
   JavaScriptStaticPathContext,
 } from "./javascriptStaticAnalysisTypes.js";
@@ -273,6 +277,31 @@ export interface ElectronWebviewAttachFinding {
   readonly location: JavaScriptSourceRange;
 }
 
+/**
+ * One Content-Security-Policy recovered from JavaScript or HTML. `policy`
+ * keeps runtime parts as `${…}`; directives with such parts are not judged.
+ */
+export interface ElectronContentSecurityPolicyFinding {
+  readonly mechanism:
+    | "header-property"
+    | "directive-list"
+    | "string-literal"
+    | "html-meta-string"
+    | "html-meta";
+  /** Lower-case header name, when the policy is a header or meta value. */
+  readonly header: string | null;
+  readonly policy: string | null;
+  /** The value expression when no policy text is static. */
+  readonly policy_expression: string | null;
+  readonly directives: readonly ContentSecurityPolicyDirective[];
+  readonly concerns: readonly ContentSecurityPolicyConcern[];
+  readonly dynamic_parts: number;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
 /** Resolved Electron identity of one call or construction callee root. */
 export interface ElectronCalleeBinding {
   /** Electron export path of the root after `consumed_members` callee members. */
@@ -290,6 +319,7 @@ export interface ElectronStaticFindings {
   readonly utility_processes: readonly ElectronUtilityProcessFinding[];
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
   readonly webview_attachments: readonly ElectronWebviewAttachFinding[];
+  readonly content_security_policies: readonly ElectronContentSecurityPolicyFinding[];
 }
 
 /** Number of Electron findings, counted once for limits and limitations. */
@@ -302,4 +332,5 @@ export const electronStaticFindingCount = (
   electron.sender_validations.length +
   electron.utility_processes.length +
   electron.native_addon_bindings.length +
-  electron.webview_attachments.length;
+  electron.webview_attachments.length +
+  electron.content_security_policies.length;

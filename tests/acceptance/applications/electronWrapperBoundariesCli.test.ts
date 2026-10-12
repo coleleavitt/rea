@@ -40,6 +40,10 @@ function proclist(requireAddon = load) { return requireAddon("proclist"); }
 load("./native/direct.node");
 process.dlopen(module, path.join(__dirname, "native", "direct.node"));
 require("gyp");
+session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+  callback({ responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": ["default-src 'self'; script-src 'self' 'unsafe-eval'; img-src * data:"] } });
+});
+const framePolicy = (extra) => ["default-src 'none'", \`script-src 'self' \${extra}\`, "object-src 'none'"].join("; ");
 throw new Error("must not execute main");
 `;
 
@@ -257,6 +261,57 @@ const expectNativeLoaders = (graph: Graph): void => {
   );
 };
 
+const expectPolicies = (graph: Graph): void => {
+  const policies = graph.nodes.flatMap(({ observations }) =>
+    observations.flatMap(({ properties, evidence }) =>
+      properties.fact_kind === "content-security-policy"
+        ? [{ properties, evidence }]
+        : [],
+    ),
+  );
+  expect(policies.map(({ properties }) => properties)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        mechanism: "header-property",
+        header: "content-security-policy",
+        concerns: [
+          {
+            directive: "script-src",
+            source: "'unsafe-eval'",
+            reason: "'unsafe-eval' allows string evaluation.",
+          },
+          {
+            directive: "img-src",
+            source: "*",
+            reason: "The wildcard source allows any host.",
+          },
+        ],
+      }),
+      expect.objectContaining({
+        mechanism: "directive-list",
+        policy: "default-src 'none'; script-src 'self' ${…}; object-src 'none'",
+        dynamic_parts: 1,
+        concerns: [],
+      }),
+      expect.objectContaining({
+        mechanism: "html-meta",
+        directives: [
+          { name: "default-src", sources: ["'self'"] },
+          { name: "style-src", sources: ["'self'", "'unsafe-inline'"] },
+          { name: "connect-src", sources: ["'self'", "ws:"] },
+        ],
+        concerns: [
+          expect.objectContaining({
+            directive: "style-src",
+            source: "'unsafe-inline'",
+          }),
+          expect.objectContaining({ directive: "connect-src", source: "ws:" }),
+        ],
+      }),
+    ]),
+  );
+};
+
 const expectBridgeObjects = (graph: Graph): void => {
   expect(
     located(graph, "context-bridge-api", 2)?.observations[0]?.properties,
@@ -303,6 +358,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       writeFile(join(root, "main.cjs"), MAIN),
       writeFile(join(root, "preload.cjs"), PRELOAD),
       writeFile(
+        join(root, "index.html"),
+        `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws:">`,
+      ),
+      writeFile(
         join(root, "webview-preload.cjs"),
         'throw new Error("inert preload");\n',
       ),
@@ -337,6 +396,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       webview_attach_handlers: 1,
       preload_entrypoints: 2,
       inferred_api_identity_findings: 5,
+      content_security_policies: 3,
+      content_security_policy_concerns: 4,
       context_bridge_apis: 3,
       ipc: { main_handlers: 2, paired_renderer_transmissions: 1 },
     });
@@ -345,5 +406,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expectBridgeObjects(graph);
     expectLocalAlternatives(graph);
     expectNativeLoaders(graph);
+    expectPolicies(graph);
   },
 );

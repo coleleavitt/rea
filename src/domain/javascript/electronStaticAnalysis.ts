@@ -4,6 +4,7 @@ import { inspectElectronBrowserNode } from "./electronStaticAnalysisBrowser.js";
 import { inspectElectronIpcNode } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronNativeNode } from "./electronStaticAnalysisNative.js";
 import { inspectElectronWebviewNode } from "./electronStaticAnalysisWebview.js";
+import { inspectContentSecurityPolicyNode } from "./electronStaticAnalysisCsp.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 /** Collect Electron-specific syntax during the shared inert AST traversal. */
@@ -15,4 +16,5 @@ export const inspectElectronStaticNode = (
   inspectElectronIpcNode(node, context);
   inspectElectronNativeNode(node, context);
   inspectElectronWebviewNode(node, context);
+  inspectContentSecurityPolicyNode(node, context);
 };

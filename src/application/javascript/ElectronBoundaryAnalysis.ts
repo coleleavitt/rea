@@ -93,6 +93,10 @@ export const summarizeElectronBoundaries = (
   const windows = javascript.flatMap(
     ({ electron }) => electron.browser_windows,
   );
+  const policies = [
+    ...javascript.flatMap(({ electron }) => electron.content_security_policies),
+    ...analysis.html_policies.map(({ policy }) => policy),
+  ];
   const identities = javascript.flatMap(({ electron }) =>
     [
       ...electron.browser_windows,
@@ -197,6 +201,11 @@ export const summarizeElectronBoundaries = (
     inferred_api_identity_findings: identities.filter(
       ({ basis }) => basis !== "module-binding",
     ).length,
+    content_security_policies: policies.length,
+    content_security_policy_concerns: policies.reduce(
+      (count, { concerns }) => count + concerns.length,
+      0,
+    ),
   };
 };
 

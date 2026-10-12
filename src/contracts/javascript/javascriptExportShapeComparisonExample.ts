@@ -67,6 +67,8 @@ const summary = {
   native_addon_bindings: 0,
   resolved_native_addon_bindings: 0,
   inferred_api_identity_findings: 0,
+  content_security_policies: 0,
+  content_security_policy_concerns: 0,
 };
 const statistics = {
   relevant_files: 1,

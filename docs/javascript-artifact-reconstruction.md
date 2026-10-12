@@ -311,6 +311,18 @@ Selected bounded text is then parsed as inert data to recover:
   handler locations, and conservative pairing status;
 - sender, frame, URL, and origin validation candidates without claiming that a
   visible check enforces a complete policy;
+- Content-Security-Policy text from `<meta http-equiv>` elements in HTML
+  files, from JavaScript properties or assignments named
+  `Content-Security-Policy` or `Content-Security-Policy-Report-Only` (such as
+  `responseHeaders` in a `webRequest.onHeadersReceived` handler), from
+  `[...].join(separator)` directive lists, and from string or template literals
+  with at least two directives, including `<meta>` markup inside them. Each
+  policy reports its directives and `concerns`: wildcard and network-scheme
+  sources, `data:` or `blob:` script sources, `'unsafe-inline'` (scripts only
+  without a nonce or hash), `'unsafe-eval'`, and a missing script or plugin
+  fallback. Runtime parts appear as `${…}`; directives containing them are not
+  judged, and omissions are judged only for fully static policies. Where a
+  policy is declared does not prove which documents it applies to;
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on. Loader calls are included: a function from
   `module.createRequire`, the `bindings` and `node-gyp-build` packages, and

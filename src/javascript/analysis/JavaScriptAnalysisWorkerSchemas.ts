@@ -300,6 +300,34 @@ const electron = z.strictObject({
       })
       .transform(withRuntime),
   ),
+  content_security_policies: z.array(
+    z
+      .strictObject({
+        ...findingContext,
+        mechanism: z.enum([
+          "header-property",
+          "directive-list",
+          "string-literal",
+          "html-meta-string",
+          "html-meta",
+        ]),
+        header: z.string().nullable(),
+        policy: z.string().nullable(),
+        policy_expression: z.string().nullable(),
+        directives: z.array(
+          z.strictObject({ name: z.string(), sources: strings }),
+        ),
+        concerns: z.array(
+          z.strictObject({
+            directive: z.string(),
+            source: z.string().nullable(),
+            reason: z.string(),
+          }),
+        ),
+        dynamic_parts: count,
+      })
+      .transform(withRuntime),
+  ),
 });
 const referenceShape = {
   ...findingContext,
