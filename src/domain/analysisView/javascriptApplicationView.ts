@@ -4,6 +4,7 @@ import {
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import type { JavaScriptApplicationAnalysisResult } from "../javascript/javascriptApplicationAnalysis.js";
 import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSchemas.js";
@@ -156,7 +157,14 @@ const javascriptUnknowns = (
     );
   if (analysis.semantic_graph.unknowns.length > 0)
     unknowns.push(
-      `${String(analysis.semantic_graph.unknowns.length)} semantic graph unknowns remain in the parent Evidence.`,
+      `${String(analysis.semantic_graph.unknowns.length)} semantic graph unknowns remain in the parent Evidence; page semantic_unknowns to read them.`,
+    );
+  const truncatedSources = analysis.semantic_graph.coverage.files.filter(
+    ({ status }) => status !== "complete",
+  ).length;
+  if (truncatedSources > 0)
+    unknowns.push(
+      `${String(truncatedSources)} sources have truncated or unavailable semantic facts; page semantic_files for exact omitted counts.`,
     );
   return unknowns;
 };
@@ -308,6 +316,28 @@ export const projectJavaScriptApplicationView = (
       ...shared,
     });
   }
+  if (view.collection === "semantic_files") {
+    const files = analysis.semantic_graph.coverage.files;
+    const items = files.slice(view.offset, view.offset + view.limit);
+    return ok({
+      kind: "page",
+      view,
+      items,
+      coverage: pageCoverage(view.offset, items.length, files.length),
+      ...shared,
+    });
+  }
+  if (view.collection === "semantic_unknowns") {
+    const unknowns = semanticUnknownItems(analysis);
+    const items = unknowns.slice(view.offset, view.offset + view.limit);
+    return ok({
+      kind: "page",
+      view,
+      items,
+      coverage: pageCoverage(view.offset, items.length, unknowns.length),
+      ...shared,
+    });
+  }
   if (view.collection !== "modules")
     return err(
       jsIncompatible(
@@ -329,3 +359,30 @@ export const projectJavaScriptApplicationView = (
     ...shared,
   });
 };
+
+/** Retained unknown frontiers grouped by source, family and reason. */
+const semanticUnknownItems = (
+  analysis: JavaScriptApplicationAnalysisResult,
+): JsonValue[] =>
+  analysis.semantic_graph.unknowns
+    .map((unknown) => {
+      const { location } = unknown.evidence;
+      const modulePath = !location.available
+        ? null
+        : location.value.kind === "source-range"
+          ? location.value.source
+          : location.value.kind === "artifact-path"
+            ? location.value.path
+            : null;
+      return { module_path: modulePath, ...unknown };
+    })
+    .sort(
+      (left, right) =>
+        compareUnicodeCodePoints(
+          left.module_path ?? "",
+          right.module_path ?? "",
+        ) ||
+        compareUnicodeCodePoints(left.family, right.family) ||
+        compareUnicodeCodePoints(left.reason, right.reason) ||
+        compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
+    );
