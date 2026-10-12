@@ -24,24 +24,21 @@ import {
   recoveryInputFailure,
   snapshotRecoveryInputs,
 } from "./RecoveryFiles.js";
-import {
-  resolveWakaruCommand,
-  type WakaruLauncher,
-  WakaruCleanupFailure,
-} from "./WakaruCommand.js";
+import { RecoveryCleanupFailure } from "./RecoveryCommand.js";
+import type { RecoveryEngine, RecoveryLauncher } from "./RecoveryEngine.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
-import { prepareWakaruExecution } from "./WakaruExecution.js";
-import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
 
 /** Serialized recovery adapter retaining failed process, workspace and publication cleanup. */
-export class WakaruProvider implements JavaScriptRecoveryPort {
+export class RecoveryProvider implements JavaScriptRecoveryPort {
+  readonly #engines: ReadonlyMap<RecoveryEngine["id"], RecoveryEngine>;
   #tail: Promise<void> = Promise.resolve();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #pendingCleanup:
     | {
+        providerId: string;
         root: string | undefined;
         process: ProviderProcessSupervisor | undefined;
         tree: SafeOutputTree | undefined;
@@ -49,11 +46,14 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     | undefined;
 
   constructor(
+    engines: readonly RecoveryEngine[],
     readonly environment: Readonly<
       Record<string, string | undefined>
     > = process.env,
-    readonly launcher?: WakaruLauncher,
-  ) {}
+    readonly launcher?: RecoveryLauncher,
+  ) {
+    this.#engines = new Map(engines.map((engine) => [engine.id, engine]));
+  }
 
   /** Recover selected scripts using validated reports and verified output bytes. */
   recover(
@@ -64,7 +64,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       return Promise.resolve(
         err(
           new ProviderCleanupError(
-            "wakaru",
+            input.engine,
             [],
             { reason: "Provider is closing" },
             { operation: OPERATION },
@@ -75,7 +75,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       this.#closing
         ? err(
             new ProviderCleanupError(
-              "wakaru",
+              input.engine,
               [],
               { reason: "Provider is closing" },
               { operation: OPERATION },
@@ -96,15 +96,28 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
+    const engine = this.#engines.get(input.engine);
+    if (engine === undefined)
+      return err(
+        recoveryInputFailure(
+          "engine",
+          `Recovery engine ${input.engine} is not available in this build`,
+        ),
+      );
+    const rejected = engine.validate(input);
+    if (rejected !== undefined) return err(rejected);
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;
     let execution: AnalysisExecution | undefined;
-    const deadline = Date.now() + RECOVERY_LIMITS.timeoutMs;
+    const deadline = {
+      at: Date.now() + engine.limits.timeoutMs,
+      timeoutMs: engine.limits.timeoutMs,
+    };
     try {
       checkRecoveryCancellation(options?.signal);
-      const engine = await resolveWakaruCommand(this.environment);
-      root = await mkdtemp(join(tmpdir(), "rea-wakaru-"));
+      const tool = await engine.resolve(this.environment);
+      root = await mkdtemp(join(tmpdir(), `rea-${engine.id}-`));
       const inputs = join(root, "inputs");
       const staging = join(root, "modules");
       await mkdir(inputs, { mode: 0o700 });
@@ -112,6 +125,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       const sources = await snapshotRecoveryInputs(
         [input.path, ...(input.additional_paths ?? [])],
         inputs,
+        engine.limits.inputBytes,
         options?.signal,
       );
       try {
@@ -124,12 +138,12 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           cause,
         );
       }
-      execution = await prepareWakaruExecution({
+      execution = await engine.execute({
         root,
         tree,
         input,
         sources,
-        engine,
+        tool,
         environment: this.environment,
         launcher: this.launcher,
         options,
@@ -148,7 +162,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];
       const cleanupOwner =
-        failure instanceof WakaruCleanupFailure
+        failure instanceof RecoveryCleanupFailure
           ? failure.cleanupOwner
           : undefined;
       let failedTree: SafeOutputTree | undefined;
@@ -165,7 +179,9 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         }
       }
       if (cleanupOwner !== undefined)
-        residuals.push(cleanupOwner.launch.ownership?.runId ?? "wakaru-worker");
+        residuals.push(
+          cleanupOwner.launch.ownership?.runId ?? `${engine.id}-worker`,
+        );
       if (root !== undefined && cleanupOwner === undefined) {
         const failedRoot = root;
         try {
@@ -185,6 +201,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         root !== undefined
       ) {
         this.#pendingCleanup = {
+          providerId: engine.id,
           root,
           process: cleanupOwner,
           tree: failedTree,
@@ -195,14 +212,14 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       if (residuals.length > 0)
         return err(
           new ProviderCleanupError(
-            "wakaru",
+            engine.id,
             residuals,
             {
-              ...(failure instanceof WakaruCleanupFailure
+              ...(failure instanceof RecoveryCleanupFailure
                 ? failure.diagnostics
                 : {}),
               previous_error:
-                failure instanceof WakaruCleanupFailure
+                failure instanceof RecoveryCleanupFailure
                   ? (failure.diagnostics?.previous_error ?? null)
                   : recoveryFailureMessage(failure),
               cleanup_failures: cleanupFailures,
@@ -228,7 +245,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       return err(
         failure instanceof AnalysisError
           ? failure
-          : new ProviderAdapterError("wakaru", OPERATION, {
+          : new ProviderAdapterError(engine.id, OPERATION, {
               cause: failure,
               diagnostics: { reason: recoveryFailureMessage(failure) },
             }),
@@ -262,9 +279,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       const stopped = await pending.process.stop();
       if (stopped.status === "incomplete")
         return new ProviderCleanupError(
-          "wakaru",
+          pending.providerId,
           [
-            pending.process.launch.ownership?.runId ?? "wakaru-worker",
+            pending.process.launch.ownership?.runId ??
+              `${pending.providerId}-worker`,
             ...(pending.root === undefined ? [] : [pending.root]),
           ],
           { reason: stopped.reason },
@@ -279,7 +297,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         pending.tree = undefined;
       } catch (cause: unknown) {
         return new ProviderCleanupError(
-          "wakaru",
+          pending.providerId,
           [tree.outputRoot],
           { reason: recoveryFailureMessage(cause) },
           { operation: OPERATION, cause },
@@ -293,7 +311,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         pending.root = undefined;
       } catch (cause: unknown) {
         return new ProviderCleanupError(
-          "wakaru",
+          pending.providerId,
           [root],
           { reason: recoveryFailureMessage(cause) },
           { operation: OPERATION, cause },
