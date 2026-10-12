@@ -474,6 +474,16 @@ paths retain source ranges, module identities, literal channels and branch
 conditions as static candidates. Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
 This pass neither executes the bundle nor proves that runtime guards pass.
+Substituted channels and bridge keys fold through the same constant operators
+as static values: concatenation and other primitive operators, templates,
+`String.fromCharCode` and `Array.prototype.join`. An operand known only to be
+an object compares exactly under strict equality with a primitive and loose
+equality with `null` or `undefined`; other operators on it stay unresolved. An
+operand whose alternatives carry branch conditions is folded once per
+alternative, and each folded value keeps the conditions of the alternatives it
+came from. Electron API identity comes from the shared identity index, so an
+import keeps its module binding and an unbound wrapper parameter uses the
+inference described below, recorded in the finding's `electron_identity`.
 An ambiguous or unresolved handler retains its channel registration but does
 not acquire a path to one arbitrarily selected callback. Unknown factory
 conditions retain both return branches, including fallthrough. Short-circuit
@@ -584,7 +594,10 @@ unchanged, but the relationship from the containing source to the window or
 handler is an inference: `medium` confidence when every call site is known and
 resolved, otherwise `low`. Deeper wrapper chains, calls from other files, and
 writes to the parameter inside the wrapper are not examined for this identity;
-wrapper substitution follows deeper chains separately.
+wrapper substitution follows deeper chains separately. This record summarizes
+every call site of the wrapper. Wrapped call paths instead bind each call site's
+own arguments, and use the summary only for a parameter that no call site on the
+path binds.
 
 A local binding with one stable initializer that is a `??`, `||`, `&&`,
 conditional, or object literal is examined the same way, for example

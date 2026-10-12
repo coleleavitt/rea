@@ -15,6 +15,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 import type { JavaScriptElectronIdentity } from "./javascriptSemanticAnalysis.js";
 import type { JavaScriptAnalysisAccumulator } from "./javascriptStaticAnalysisState.js";
 import type {
+  ElectronApiIdentity,
   ElectronCallPath,
   ElectronCallPathStep,
   ElectronIpcDescriptor,
@@ -244,6 +245,7 @@ export const collectElectronWrappedCallPaths = (
     args: readonly SymbolicValue[],
     context: PathContext,
     endpoint: string,
+    identity: ElectronApiIdentity,
   ): void => {
     const first = args[0];
     if (first?.kind !== "literal" || typeof first.value !== "string") {
@@ -262,10 +264,9 @@ export const collectElectronWrappedCallPaths = (
       JSON.stringify(range(context.entryNode)) === JSON.stringify(location)
         ? undefined
         : range(context.entryNode);
-    // Substitution reaches Electron only through a module origin; the
-    // substitution itself is recorded as the wrapper resolution basis.
+    // The substitution itself is recorded as the wrapper resolution basis.
     const findingContext = {
-      electron_identity: { basis: "module-binding" as const },
+      electron_identity: identity,
       module_key: null,
       location,
       ...(invocationLocation === undefined
@@ -396,6 +397,7 @@ export const collectElectronWrappedCallPaths = (
     args: readonly SymbolicValue[],
     context: PathContext,
     guardedDispatch: boolean,
+    identity: ElectronApiIdentity,
   ): void => {
     const key = args[0];
     const object = args[1];
@@ -421,7 +423,7 @@ export const collectElectronWrappedCallPaths = (
       members,
       conditional_members: [],
       unknown_members: resolver.unknownMembers(object),
-      electron_identity: { basis: "module-binding" as const },
+      electron_identity: identity,
       module_key: null,
       location,
     };
@@ -511,7 +513,9 @@ export const collectElectronWrappedCallPaths = (
     const context =
       sourcePathOf(node) === null ? { ...outer, local: node } : outer;
     const value = resolver.evaluate(node.callee, env);
-    const args = resolver.arguments(node, env);
+    // Read arguments only for callees that consume them; see the resolver.
+    let args: readonly SymbolicValue[] | undefined;
+    const callArguments = () => (args ??= resolver.arguments(node, env));
     const target = node.callee;
     // A fulfillment callback runs once its promise is fulfilled.
     if (
@@ -521,8 +525,9 @@ export const collectElectronWrappedCallPaths = (
       for (const promise of symbolicVariants(
         resolver.evaluate(target.object, env),
       )) {
-        const fn = args[0];
-        if (promise.kind !== "promise" || fn?.kind !== "function") continue;
+        if (promise.kind !== "promise") continue;
+        const fn = callArguments()[0];
+        if (fn?.kind !== "function") continue;
         const settled = metadataContext(context, promise);
         const fulfilled =
           settled === null || promise.fulfilled
@@ -548,7 +553,7 @@ export const collectElectronWrappedCallPaths = (
       if (callee.kind === "function") {
         functionBody(
           callee,
-          args,
+          callArguments(),
           {
             ...branchContext,
             steps: [
@@ -561,13 +566,28 @@ export const collectElectronWrappedCallPaths = (
       } else if (callee.kind === "external") {
         const path = callee.path;
         const endpoint = path.join(".");
+        const calleeIdentity = callee.identity ?? { basis: "module-binding" };
         if (identity.intactExport(path)) {
           const descriptor = ipcDescriptor(path.slice(1));
-          if (descriptor) ipc(node, descriptor, args, branchContext, endpoint);
+          if (descriptor)
+            ipc(
+              node,
+              descriptor,
+              callArguments(),
+              branchContext,
+              endpoint,
+              calleeIdentity,
+            );
           else if (
             path.slice(1).join(".") === "contextBridge.exposeInMainWorld"
           )
-            bridge(node, args, branchContext, hasConditions(callee));
+            bridge(
+              node,
+              callArguments(),
+              branchContext,
+              hasConditions(callee),
+              calleeIdentity,
+            );
           else if (path[1] === "clipboard") emit(branchContext, node, endpoint);
         } else if (
           (path[0] === "navigator" && path[1] === "clipboard") ||

@@ -147,6 +147,7 @@ it("preserves graph commitments and export shapes when consuming file-local IR",
           analyzed.semantic.ir,
           null,
           null,
+          analyzed.javascript?.electron.call_paths,
         ),
       );
       const module = projectJavaScriptModuleSemantics(analyzed.semantic.ir);

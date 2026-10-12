@@ -1,5 +1,8 @@
 import { parseContentSecurityPolicy } from "../../domain/javascript/contentSecurityPolicy.js";
-import { electronStaticFindingCount } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import {
+  electronStaticFindingCount,
+  type ElectronCallPath,
+} from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
@@ -76,6 +79,7 @@ interface ArtifactAnalysisContext<
   readonly projectSemantics: (
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
+    paths: readonly ElectronCallPath[] | undefined,
   ) => Generator<void, SemanticIr>;
   readonly companions?: ReadonlyMap<
     string,
@@ -115,6 +119,7 @@ export const analyzeAndProjectJavaScriptArtifactFiles = async (
   projectSemantics: (
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
+    paths: readonly ElectronCallPath[] | undefined,
   ) => Iterator<void, void> | void,
   beforeFile?: (
     file: JavaScriptArtifactFile,
@@ -127,8 +132,9 @@ export const analyzeAndProjectJavaScriptArtifactFiles = async (
   const projectFileSemantics = function* (
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
+    paths: readonly ElectronCallPath[] | undefined,
   ): Generator<void, JavaScriptModuleSemanticIr> {
-    const projection = projectSemantics(file, ir);
+    const projection = projectSemantics(file, ir, paths);
     if (projection !== undefined) while (projection.next().done !== true) yield;
     return projectJavaScriptModuleSemantics(ir);
   };
@@ -429,7 +435,11 @@ function* analyzeArtifactFileSteps<
   const projected =
     semantics === null
       ? null
-      : yield* context.projectSemantics(file, semantics);
+      : yield* context.projectSemantics(
+          file,
+          semantics,
+          analysis.electron.call_paths,
+        );
   state.files.push({
     file,
     javascript: analysis,

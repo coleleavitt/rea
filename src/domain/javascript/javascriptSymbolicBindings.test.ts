@@ -511,3 +511,26 @@ it("loads esbuild CommonJS wrappers and namespace conversions", () => {
   `);
   expect(value).toEqual({ kind: "literal", value: "lib:ping" });
 });
+
+it("folds each predicated operand alternative under its own predicate", () => {
+  const value = inspectOne(`inspect("app:" + (flag ? "a" : "b"));`);
+  expect(
+    symbolicVariants(value).map((variant) => [
+      variant.kind === "literal" ? variant.value : variant.kind,
+      variant.conditions?.map(({ positive }) => positive),
+    ]),
+  ).toEqual([
+    ["app:a", [true]],
+    ["app:b", [false]],
+  ]);
+});
+
+it("compares an object with nullish values but not with coerced primitives", () => {
+  const values = inspectedValues(`const options = {};
+    inspect(options == null); inspect(options !== undefined); inspect(options === "x"); inspect(options == "x");`);
+  expect(
+    values.map((value) =>
+      value.kind === "literal" ? value.value : value.kind,
+    ),
+  ).toEqual([false, true, false, "unknown"]);
+});

@@ -1,5 +1,7 @@
 import type * as t from "@babel/types";
 
+import type { ElectronApiIdentity } from "./electronStaticAnalysisTypes.js";
+
 /** A lexical substitution environment, never a JavaScript execution context. */
 export interface SymbolicEnvironment {
   readonly values: ReadonlyMap<string, SymbolicValue>;
@@ -65,7 +67,12 @@ export type SymbolicValue = (
       readonly kind: "literal";
       readonly value: string | number | boolean | null | undefined;
     }
-  | { readonly kind: "external"; readonly path: readonly string[] }
+  | {
+      readonly kind: "external";
+      readonly path: readonly string[];
+      /** Inferred Electron identity; absent for a proven module origin. */
+      readonly identity?: ElectronApiIdentity;
+    }
   | {
       readonly kind: "object";
       readonly node: t.ObjectExpression;
@@ -123,18 +130,24 @@ export const symbolicTruth = (value: SymbolicValue): boolean | undefined => {
   }
   return value.kind === "literal"
     ? Boolean(value.value)
-    : [
-          "function",
-          "object",
-          "namespace",
-          "array",
-          "record",
-          "loader",
-          "promise",
-        ].includes(value.kind)
+    : isSymbolicObject(value)
       ? true
       : undefined;
 };
+
+const OBJECT_KINDS: ReadonlySet<SymbolicValue["kind"]> = new Set([
+  "function",
+  "object",
+  "namespace",
+  "array",
+  "record",
+  "loader",
+  "promise",
+]);
+
+/** Whether a value is a JavaScript object (functions and promises included). */
+export const isSymbolicObject = (value: SymbolicValue): boolean =>
+  OBJECT_KINDS.has(value.kind);
 
 /** Attach selection predicates to values while preserving their representation. */
 export const symbolicCondition = (
