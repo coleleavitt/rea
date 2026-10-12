@@ -7,6 +7,7 @@ import {
 } from "./javascriptStaticAnalysisFindings.js";
 import {
   STATIC_ROUTE_CALL_NAMES,
+  argumentNode,
   argumentValue,
   calleeName,
   endpointArgument as endpointArgumentHelper,
@@ -20,6 +21,8 @@ import {
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { staticConstantString } from "./javascriptStaticConstants.js";
+import { consumeValueNodes } from "./javascriptStaticDataEndpoints.js";
 import type {
   JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   JavaScriptEndpointInput as EndpointInput,
@@ -178,34 +181,46 @@ const inspectEndpointCall = (
   const route = STATIC_ROUTE_CALL_NAMES.some(
     (candidate) => name === candidate || name.endsWith(`.${candidate}`),
   );
-  if (route && first !== undefined)
+  if (route && first !== undefined) {
+    const argument = argumentNode(node.arguments[0]);
+    if (argument !== undefined) consumeValueNodes(context, argument);
     addEndpoint(context, {
       node,
       kind: "route",
       value: first,
+      expression: null,
       mechanism: `call:${name}`,
     });
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
+  const read = (argument: t.Node | null | undefined): string | undefined =>
+    staticConstantString(context.constants(argument));
   const endpoint = endpointArgumentHelper(
-    name,
-    node.arguments,
-    node.callee,
-    receiverFact,
+    { name, args: node.arguments, callee: node.callee, receiverFact },
+    read,
   );
-  if (endpoint !== undefined)
+  const constant = context.constants(endpoint);
+  const value = staticConstantString(constant);
+  if (endpoint !== undefined && value !== undefined) {
+    consumeValueNodes(context, endpoint);
     addEndpoint(context, {
       node,
       kind: "network",
-      value: endpoint,
+      value,
+      expression:
+        constant.status === "derived"
+          ? sourceSlice(context.source, endpoint)
+          : null,
       mechanism: `call:${name}`,
     });
+  }
 };
 
 /** Record tRPC procedures, tRPC link URLs and named GraphQL operations. */
 export const inspectRpcNode = (node: t.Node, context: FindingContext): void => {
   const rpc = context.rpcScan.inspect(node);
   if (rpc !== undefined)
-    addEndpoint(context, { node, kind: "network", ...rpc });
+    addEndpoint(context, { node, kind: "network", expression: null, ...rpc });
 };
 
 export const inspectRouteProperty = (
@@ -213,13 +228,16 @@ export const inspectRouteProperty = (
   context: FindingContext,
 ): void => {
   const key = semanticStaticPropertyName(node.key, node.computed);
-  if ((key === "path" || key === "route") && t.isStringLiteral(node.value))
+  if ((key === "path" || key === "route") && t.isStringLiteral(node.value)) {
+    consumeValueNodes(context, node.value);
     addEndpoint(context, {
       node,
       kind: "route",
       value: node.value.value,
+      expression: null,
       mechanism: `property:${key}`,
     });
+  }
 };
 
 export const inspectRoleProperty = (
@@ -310,7 +328,9 @@ const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
     value: {
       kind: input.kind,
       value: sanitizeEndpointCandidate(input.value),
+      expression: input.expression,
       mechanism: input.mechanism,
+      property_path: null,
       module_key: null,
       location: range(input.node),
     },

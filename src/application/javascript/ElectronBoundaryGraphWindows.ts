@@ -212,7 +212,12 @@ const addContextBridge = (
     properties: {
       world: value.world,
       api_key: value.api_key,
-      resolution: value.api_key === null ? "dynamic" : "literal",
+      resolution:
+        value.api_key === null
+          ? "dynamic"
+          : value.api_key_expression === null
+            ? "literal"
+            : "derived",
     },
   });
 };

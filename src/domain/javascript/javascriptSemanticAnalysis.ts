@@ -46,7 +46,11 @@ import {
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
-import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
+import {
+  evaluateSemanticExpression,
+  evaluateSemanticProvenance,
+} from "./javascriptSemanticValues.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronExportPath,
@@ -180,11 +184,44 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
           ]
         : []),
       "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
+      "Folded String.fromCharCode and Array.prototype.join calls assume the unmodified built-ins.",
       "Return sites include only direct callable returns; nested callable returns remain separate.",
       "Local call, argument, return, and closure relations are static candidates and do not prove runtime invocation.",
       "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
+  };
+}
+
+/** Exact-value evaluation for one parsed artifact, or why it is unavailable. */
+export type JavaScriptValueEvaluation =
+  | {
+      readonly status: "available";
+      readonly evaluate: (node: t.Node) => JavaScriptSemanticValue;
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+/**
+ * Build an evaluator for exact values of inert expressions in one parsed
+ * artifact. Static finding producers use it so folded constants and
+ * once-bound identifiers share the semantic value lattice.
+ */
+export function* createParsedJavaScriptValueEvaluatorSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, JavaScriptValueEvaluation> {
+  const state = createState(file.program);
+  yield* collectDefinitionsSteps(file.program, state);
+  try {
+    yield* collectSemanticMemberMutationsSteps(file.program, state);
+  } catch (cause: unknown) {
+    // Values read without complete member writes could be stale, so a
+    // resource failure here leaves the file's static values literal-only.
+    if (!(cause instanceof RangeError)) throw cause;
+    return { status: "unavailable", reason: cause.message };
+  }
+  return {
+    status: "available",
+    evaluate: (node) => evaluateSemanticExpression(node, state),
   };
 }
 

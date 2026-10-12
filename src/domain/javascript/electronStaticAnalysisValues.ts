@@ -2,10 +2,7 @@ import * as t from "@babel/types";
 
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
-import {
-  readExactJavaScriptLiteral,
-  semanticStaticPropertyName,
-} from "./javascriptAstValues.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -28,19 +25,18 @@ export const electronCalleePath = (
     : [...exported, ...members.toReversed()];
 };
 
-/** Preserve one literal value or the exact inert expression. */
+/** Preserve one literal or derived value, or the exact inert expression. */
 export const electronStaticValue = (
-  source: string,
+  context: JavaScriptFindingContext,
   node: t.Node | null | undefined,
 ): ElectronStaticValue => {
-  const literal = literalValue(node);
-  return literal.found
-    ? { status: "literal", value: literal.value, expression: null }
-    : {
-        status: "dynamic",
-        value: null,
-        expression: boundedExpression(source, node),
-      };
+  const constant = context.constants(node);
+  if (constant.status === "literal")
+    return { status: "literal", value: constant.value, expression: null };
+  const expression = boundedExpression(context.source, node);
+  return constant.status === "derived"
+    ? { status: "derived", value: constant.value, expression }
+    : { status: "dynamic", value: null, expression };
 };
 
 /** Return an actionable expression without evaluating it. */
@@ -158,24 +154,4 @@ const collectMembersAt = (
     if (t.isObjectProperty(property) && t.isObjectExpression(property.value))
       collectMembersAt(property.value, path, depth + 1, state);
   }
-};
-
-const literalValue = (
-  node: t.Node | null | undefined,
-):
-  | { readonly found: true; readonly value: string | number | boolean | null }
-  | { readonly found: false } => {
-  if (node === null || node === undefined) return { found: false };
-  const literal = readExactJavaScriptLiteral(node);
-  if (literal.found) return literal;
-  if (
-    t.isUnaryExpression(node, { operator: "-" }) &&
-    t.isNumericLiteral(node.argument)
-  ) {
-    const value = -node.argument.value;
-    return Number.isFinite(value) && !Object.is(value, -0)
-      ? { found: true, value }
-      : { found: false };
-  }
-  return { found: false };
 };
