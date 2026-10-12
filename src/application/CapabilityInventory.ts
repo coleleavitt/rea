@@ -306,7 +306,7 @@ const workflowAvailabilityFor = ({
       : {
           reason: "provider_missing",
           remediation:
-            "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/javascript-recovery.md#install-wakaru. No binary target is required.",
+            "Provide util-linux prlimit and either, on Linux x64, an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) or, on Linux, an absolute REA_JSBEAUTIFY_COMMAND for jsbeautify (engine: jsbeautify); see docs/javascript-recovery.md. No binary target is required.",
         };
   if (name === "inspect_binary_layout")
     return policy.binaryLayoutEnabled === true

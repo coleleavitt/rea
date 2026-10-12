@@ -1,0 +1,370 @@
+import { mkdir } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { Readable } from "node:stream";
+import { createAnalysisExecution } from "../../application/AnalysisProvider.js";
+import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
+import {
+  javascriptRecoveryResultSchema,
+  type JavaScriptRecoveryInput,
+  type JavaScriptRecoveryResult,
+} from "../../domain/javascript/javascriptRecovery.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { resolveRecoveryTool, runRecoveryCommand } from "./RecoveryCommand.js";
+import type { RecoveryEngine, RecoveryWorkspace } from "./RecoveryEngine.js";
+import {
+  fingerprintRecoveryFile,
+  readRecoveryFile,
+  recoveryDigest,
+  recoveryInputFailure,
+  type RecoveryInputSnapshot,
+} from "./RecoveryFiles.js";
+import {
+  JSBEAUTIFY_LIMITATIONS,
+  JSBEAUTIFY_LIMITS,
+  JSBEAUTIFY_PROVIDER_IDENTITY,
+  JSBEAUTIFY_REPOSITORY,
+} from "./JsBeautifyRelease.js";
+
+const OPERATION = "recover_javascript_sources";
+const REQUIREMENT =
+  "Provide an absolute REA_JSBEAUTIFY_COMMAND pointing to a jsbeautify (js-beautify-rs) binary on Linux; no tool is installed by REA. See docs/javascript-recovery.md#jsbeautify.";
+const REPARSE_PHASES = ["19.6", "21.5"] as const;
+const LEVEL_ARGUMENTS = {
+  minimal: [],
+  standard: ["--deobfuscate"],
+  aggressive: ["--rename-vars"],
+} as const satisfies Record<
+  JavaScriptRecoveryInput["rewrite_level"],
+  readonly string[]
+>;
+
+type CommandResult = Awaited<ReturnType<typeof runRecoveryCommand>>;
+
+/** The parse goal of the original file; snapshots of a single input lose its extension. */
+const sourceTypeArguments = (path: string): readonly string[] =>
+  path.endsWith(".cjs")
+    ? ["--source-type", "commonjs"]
+    : path.endsWith(".mjs")
+      ? ["--source-type", "module"]
+      : [];
+
+/** Published module name: the original basename for one input, else its preserved layout. */
+const moduleName = (source: RecoveryInputSnapshot, single: boolean): string => {
+  const name = basename(source.path);
+  return single && normalizeArtifactPath(name) === name
+    ? name
+    : source.relative_path;
+};
+
+/** Validity gate read from jsbeautify's stderr phase log. */
+const gate = (run: CommandResult, deobfuscated: boolean) => {
+  const reparse = Object.fromEntries(
+    REPARSE_PHASES.map((phase) => [
+      phase,
+      run.stderr.includes(
+        `[DEOBFUSCATE] Phase ${phase}: Generated output re-parse succeeded`,
+      ),
+    ]),
+  );
+  const passed =
+    run.exit_code === 0 &&
+    run.signal === null &&
+    (!deobfuscated || REPARSE_PHASES.every((phase) => reparse[phase]));
+  return { passed, exit_code: run.exit_code, signal: run.signal, reparse };
+};
+
+/** Bundler and obfuscator detections the phase log names. */
+const detections = (stderr: string): string[] => {
+  const found = new Set<string>();
+  for (const match of stderr.matchAll(
+    /Detected \d+ runtime helpers, bundler: ([\w.-]+)/g,
+  ))
+    if (match[1] !== undefined && match[1] !== "unknown") found.add(match[1]);
+  if (/Phase 0\.85: Renamed [1-9]\d* webpack bindings/.test(stderr))
+    found.add("webpack");
+  if (/\[AKAMAI\][^\n]*=> BMP/.test(stderr)) found.add("akamai-bmp");
+  return [...found];
+};
+
+/** Keep the phase summary and failures; drop jsbeautify's per-rewrite chatter. */
+const phaseLog = (stderr: string): string =>
+  stderr
+    .split("\n")
+    .filter(
+      (line) =>
+        line.startsWith("[DEOBFUSCATE] Phase") ||
+        line.startsWith("[AKAMAI]") ||
+        /\b(error|panicked|warning)\b/i.test(line),
+    )
+    .join("\n");
+
+const executeJsBeautify = async (context: RecoveryWorkspace) => {
+  const { root, tree, input, sources, tool, environment, launcher, options } =
+    context;
+  const signal = options?.signal;
+  const command = {
+    ...tool,
+    providerId: JSBEAUTIFY_PROVIDER_IDENTITY.id,
+    name: JSBEAUTIFY_PROVIDER_IDENTITY.name,
+    limits: JSBEAUTIFY_LIMITS,
+    cwd: root,
+    deadline: context.deadline,
+    environment,
+    ...(signal === undefined ? {} : { signal }),
+    ...(launcher === undefined ? {} : { launcher }),
+  };
+  const banner = await runRecoveryCommand({
+    ...command,
+    arguments: ["--version"],
+  });
+  const version = /^jsbeautify (\S+)$/.exec(banner.stdout.trim())?.[1];
+  if (banner.exit_code !== 0 || version === undefined) {
+    const reason = `jsbeautify --version did not report a version; stdout: ${banner.stdout.trim()}; exit: ${String(banner.exit_code)}`;
+    throw new AnalysisCapabilityUnavailableError(
+      JSBEAUTIFY_PROVIDER_IDENTITY.id,
+      OPERATION,
+      `${reason}; stderr: ${banner.stderr}`,
+      { userMessage: `${reason}.` },
+    );
+  }
+  const write = async (path: string, bytes: Buffer) => {
+    const file = await tree.write(
+      path,
+      Readable.from([bytes]),
+      { sha256: recoveryDigest(bytes), bytes: bytes.byteLength },
+      signal,
+    );
+    return {
+      path: join(tree.outputRoot, file.relativePath),
+      sha256: file.sha256,
+      bytes: file.bytesWritten,
+    };
+  };
+  const deobfuscated = input.rewrite_level !== "minimal";
+  const single = sources.length === 1;
+  const published: JavaScriptRecoveryResult["source"][] = [];
+  const modules: JavaScriptRecoveryResult["modules"] = [];
+  const warnings: JavaScriptRecoveryResult["warnings"] = [];
+  const runs: Record<string, unknown>[] = [];
+  const logs: string[] = [];
+  const formats = new Set<string>();
+  for (const source of sources) {
+    const snapshot = await readRecoveryFile(
+      source.snapshot_path,
+      source.bytes,
+      signal,
+    );
+    if (recoveryDigest(snapshot) !== source.sha256)
+      throw new AnalysisOutputError(
+        OPERATION,
+        `The input snapshot changed during recovery: ${source.path}`,
+      );
+    const { relative_path, ...selected } = source;
+    published.push({
+      ...selected,
+      published_copy: await write(`inputs/${relative_path}`, snapshot),
+    });
+    const name = moduleName(source, single);
+    const output = join(root, "modules", name);
+    await mkdir(dirname(output), { recursive: true, mode: 0o700 });
+    const argumentsList = [
+      source.snapshot_path,
+      "--output",
+      output,
+      "--quiet",
+      ...LEVEL_ARGUMENTS[input.rewrite_level],
+      ...sourceTypeArguments(source.path),
+    ];
+    const run = await runRecoveryCommand({
+      ...command,
+      arguments: argumentsList,
+    });
+    const verdict = gate(run, deobfuscated);
+    for (const format of detections(run.stderr)) formats.add(format);
+    logs.push(`# ${name}\n${phaseLog(run.stderr)}`);
+    runs.push({
+      module: name,
+      input: source.snapshot_path,
+      arguments: argumentsList,
+      ...verdict,
+    });
+    if (!verdict.passed) {
+      warnings.push({
+        filename: name,
+        kind: "validity-gate",
+        is_error: true,
+        message: `jsbeautify exit ${String(run.exit_code)}${run.signal === null ? "" : ` (signal ${run.signal})`}; re-parse ${REPARSE_PHASES.map((phase) => `${phase}=${String(verdict.reparse[phase])}`).join(", ")}; the output was not published`,
+      });
+      continue;
+    }
+    modules.push({
+      reported_filename: name,
+      reported_status: deobfuscated ? "deobfuscated" : "formatted",
+      artifact: await write(
+        `modules/${name}`,
+        await readRecoveryFile(output, JSBEAUTIFY_LIMITS.outputBytes, signal),
+      ),
+      source_map: null,
+      provenance: {
+        reported_input: source.snapshot_path,
+        original_path: source.path,
+        original_sha256: source.sha256,
+        extraction: "whole-file",
+        byte_ranges: [{ start: 0, end: source.bytes }],
+        context_byte_ranges: [],
+        range_semantics: "half-open-utf8-bytes",
+      },
+    });
+  }
+  const [source, ...additionalSources] = published;
+  if (source === undefined)
+    throw new AnalysisOutputError(OPERATION, "Recovery selected no input");
+  const report = await write(
+    "reports/phases.log",
+    Buffer.from(`${logs.join("\n\n")}\n`),
+  );
+  const provenance = await write(
+    "reports/provenance.json",
+    Buffer.from(
+      `${JSON.stringify({ engine: "jsbeautify", version, runs }, null, 2)}\n`,
+    ),
+  );
+  const details = {
+    source,
+    ...(additionalSources.length === 0
+      ? {}
+      : { additional_sources: additionalSources }),
+    engine: {
+      id: JSBEAUTIFY_PROVIDER_IDENTITY.id,
+      version,
+      executable: {
+        path: tool.command,
+        sha256: tool.sha256,
+        bytes: tool.bytes,
+      },
+      audited_source_revision: `unaudited caller-supplied build of ${JSBEAUTIFY_REPOSITORY}`,
+      executed_source_revision: null,
+    },
+    options: {
+      extraction_mode: input.extraction_mode,
+      rewrite_level: input.rewrite_level,
+    },
+    status:
+      warnings.length === 0 ? ("complete" as const) : ("partial" as const),
+    detected_formats: [...formats],
+    reported_safety: deobfuscated
+      ? "rewritten; generated output re-parsed"
+      : "formatted; layout verified by jsbeautify",
+    reported_strategy: deobfuscated
+      ? `jsbeautify ${LEVEL_ARGUMENTS[input.rewrite_level].join(" ")}`
+      : "jsbeautify",
+    reported_format: "per-file",
+    total: sources.length,
+    failed: warnings.length,
+    modules,
+    warnings,
+    report,
+    provenance,
+    analysis_input:
+      modules.length === 0
+        ? null
+        : {
+            input_path: join(tree.outputRoot, "modules"),
+            format: "directory" as const,
+          },
+    runtime_equivalence: "unknown" as const,
+    limitations: [...JSBEAUTIFY_LIMITATIONS],
+  };
+  const manifest = await write(
+    "manifest.json",
+    Buffer.from(`${JSON.stringify(details, null, 2)}\n`),
+  );
+  return {
+    result: javascriptRecoveryResultSchema.parse({ ...details, manifest }),
+    banner,
+    runs,
+    version,
+  };
+};
+
+/** Run, publish, then prove the originals and the engine did not change meanwhile. */
+const prepareJsBeautifyExecution = async (context: RecoveryWorkspace) => {
+  const { sources, tool, options } = context;
+  const { result, banner, runs, version } = await executeJsBeautify(context);
+  for (const selected of sources) {
+    const current = await fingerprintRecoveryFile(
+      selected.path,
+      JSBEAUTIFY_LIMITS.inputBytes,
+      options?.signal,
+    );
+    if (current.sha256 !== selected.sha256 || current.bytes !== selected.bytes)
+      throw new AnalysisOutputError(
+        OPERATION,
+        `Original input changed during recovery: ${selected.path}`,
+      );
+  }
+  if (
+    (
+      await fingerprintRecoveryFile(
+        tool.command,
+        JSBEAUTIFY_LIMITS.outputBytes,
+        options?.signal,
+      )
+    ).sha256 !== tool.sha256
+  )
+    throw new AnalysisOutputError(
+      OPERATION,
+      "Configured engine bytes changed during recovery",
+    );
+  const [source] = sources;
+  return createAnalysisExecution(
+    result,
+    { ...JSBEAUTIFY_PROVIDER_IDENTITY, version },
+    {
+      rawResult: jsonValueSchema.parse({ version: banner, runs }),
+      subject: {
+        path: source.path,
+        sha256: source.sha256,
+        format: "javascript",
+      },
+      locations: [
+        ...sources.map((selected) => ({
+          kind: "artifact-path" as const,
+          path: selected.path,
+        })),
+        ...result.modules.map((module) => ({
+          kind: "artifact-path" as const,
+          path: module.artifact.path,
+        })),
+      ],
+      limitations: result.limitations,
+    },
+  );
+};
+
+/** jsbeautify (js-beautify-rs): per-file formatting or deobfuscation behind a re-parse gate. */
+export const jsbeautifyEngine: RecoveryEngine = {
+  id: "jsbeautify",
+  limits: JSBEAUTIFY_LIMITS,
+  validate: (input) =>
+    input.extraction_mode === "structural"
+      ? undefined
+      : recoveryInputFailure(
+          "extraction_mode",
+          "jsbeautify recovers each selected file whole; only extraction_mode structural applies",
+        ),
+  resolve: (environment) =>
+    resolveRecoveryTool(environment, {
+      id: JSBEAUTIFY_PROVIDER_IDENTITY.id,
+      name: JSBEAUTIFY_PROVIDER_IDENTITY.name,
+      configured: environment.REA_JSBEAUTIFY_COMMAND,
+      supported: process.platform === "linux",
+      requirement: REQUIREMENT,
+      limits: JSBEAUTIFY_LIMITS,
+    }),
+  execute: prepareJsBeautifyExecution,
+};

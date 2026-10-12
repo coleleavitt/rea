@@ -47,6 +47,45 @@ export REA_WAKARU_COMMAND="$(realpath node_modules/@wakaru/cli-linux-x64/wakaru)
 Both give the same binary (SHA-256
 `664fa06782a61eda7ed15885134b52525fd565dd77607e642062ceb6cd927c38`).
 
+### jsbeautify
+
+`engine: "jsbeautify"` (CLI `--engine jsbeautify`) uses a caller-supplied
+[jsbeautify](https://github.com/coleleavitt/js-beautify-rs) binary on Linux
+(any architecture). Set `REA_JSBEAUTIFY_COMMAND` to its absolute path; util-linux
+`prlimit` is required as for Wakaru. REA neither installs nor pins it: the
+result reports the executable's path, SHA-256 and `jsbeautify --version` banner,
+and `audited_source_revision` says the build is unaudited.
+
+jsbeautify rewrites each selected file whole. Modules are not split, so
+`extraction_mode` must stay `structural` and each module's byte range is its
+whole input. `rewrite_level` selects the rewrite:
+
+| `rewrite_level` | jsbeautify arguments | Effect                                   |
+| --------------- | -------------------- | ---------------------------------------- |
+| `minimal`       | none                 | Formatting only                          |
+| `standard`      | `--deobfuscate`      | The multi-phase deobfuscation pipeline   |
+| `aggressive`    | `--rename-vars`      | Deobfuscation plus heuristic local names |
+
+`.cjs` inputs are parsed as CommonJS and `.mjs` inputs as modules; other
+classic scripts keep their top-level names. A file is published only when
+jsbeautify exits 0 and, when deobfuscating, its stderr reports both generated
+output re-parse checks (phases 19.6 and 21.5); otherwise the file is listed in
+`warnings` with kind `validity-gate` and the status is `partial`. Re-parsing
+proves syntax, not behaviour. `reports/phases.log` keeps the phase summary per
+file and `reports/provenance.json` the exact arguments and gate verdicts.
+
+jsbeautify's Oxc arena and worker stack reserve far more address space than
+they use (a 2.4 MB esbuild bundle peaks at 0.33 GB RSS but aborts under 1 GiB),
+so this engine runs under an 8 GiB address-space ceiling, a 300-second
+operation deadline, 256 MiB of output and 64 MiB per diagnostic stream.
+
+```sh
+export REA_JSBEAUTIFY_COMMAND="$(command -v jsbeautify)"
+rea recover-javascript-sources /tmp/app/dist/main.cjs /tmp/recovered-main \
+  --engine jsbeautify --additional-path /tmp/app/dist/preload.cjs --json
+rea analyze-javascript-application /tmp/recovered-main/modules --json
+```
+
 ## Recover and analyze
 
 ```sh
