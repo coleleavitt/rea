@@ -363,7 +363,7 @@ export const javaScriptSemanticFileProjectionCoverageSchema = z.strictObject({
   graph_byte_budget: countSchema
     .nullable()
     .describe(
-      "Serialized semantic-fact bytes offered to this source; null when unbounded.",
+      "Serialized semantic-fact bytes offered to this source when it was truncated; null when complete or unbounded.",
     ),
   retained_graph_bytes: countSchema.describe(
     "Serialized bytes of this source's retained nodes, relations, fingerprints, unknowns and first-referenced evidence contexts.",

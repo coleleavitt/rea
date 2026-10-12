@@ -527,7 +527,7 @@ it("measures retained facts as their serialized Evidence bytes", () => {
   expect(projected.unknowns.length).toBeGreaterThan(0);
   expect(projected.coverage).toMatchObject({
     status: "complete",
-    graph_byte_budget: Number.MAX_SAFE_INTEGER,
+    graph_byte_budget: null,
     retained_graph_bytes: serialized,
     omitted_nodes: 0,
     omitted_relations: 0,

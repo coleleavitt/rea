@@ -291,17 +291,18 @@ export const finishSemanticFileBudget = (
     if (!admitPendingNode(state, budget, nodeId)) budget.omitNode(nodeId);
   budget.pendingNodes.clear();
   const omittedFingerprints = fingerprints.length - retainedFingerprints.length;
+  const truncated =
+    budget.omittedNodes > 0 ||
+    budget.omittedRelations > 0 ||
+    omittedFingerprints > 0 ||
+    omittedUnknowns > 0;
   return {
     fingerprints: retainedFingerprints,
     coverage: {
-      status:
-        budget.omittedNodes > 0 ||
-        budget.omittedRelations > 0 ||
-        omittedFingerprints > 0 ||
-        omittedUnknowns > 0
-          ? "truncated"
-          : "complete",
-      graph_byte_budget: budget.limit,
+      status: truncated ? "truncated" : "complete",
+      // The offer derives from host heap; recording it only where it bound
+      // keeps identical complete results identical across hosts.
+      graph_byte_budget: truncated ? budget.limit : null,
       retained_graph_bytes: budget.used,
       omitted_nodes: budget.omittedNodes,
       omitted_relations:

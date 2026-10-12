@@ -144,9 +144,11 @@ then fingerprints, unknown frontiers, and unreferenced nodes. The first
 refusal closes that source, which keeps a connected source-ordered prefix.
 
 `semantic_graph.coverage.files` reports each source's status (`complete`,
-`truncated`, or `unavailable`), its byte budget, retained bytes, exact omitted
-node, relation, and fingerprint counts, and exact unknown-frontier totals by
-family and reason. Families report retained and omitted unknown counts. Page
+`truncated`, or `unavailable`), the byte budget a truncated source was offered,
+retained bytes, exact omitted node, relation, and fingerprint counts, and exact
+unknown-frontier totals by family and reason. The offer derives from the
+analyzing process's heap, so complete sources omit it and identical complete
+results keep identical Evidence across hosts. Families report retained and omitted unknown counts. Page
 `semantic_files` or `semantic_unknowns` with `inspect_analysis_view`, or select
 one source with `source_paths` to give it the whole budget.
 
