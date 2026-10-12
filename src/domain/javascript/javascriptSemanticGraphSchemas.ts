@@ -455,10 +455,6 @@ export type JavaScriptSemanticGraphUnknown = z.infer<
 export type JavaScriptSemanticFingerprint = z.infer<
   typeof javaScriptSemanticFingerprintSchema
 >;
-/** Exact frontier counts for one source, family and reason. */
-export type JavaScriptSemanticUnknownCount = z.infer<
-  typeof javaScriptSemanticUnknownCountSchema
->;
 /** Budget coverage reported by the source projection that produced the facts. */
 export type JavaScriptSemanticFileProjectionCoverage = z.infer<
   typeof javaScriptSemanticFileProjectionCoverageSchema

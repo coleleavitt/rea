@@ -9,6 +9,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   resolveSemanticBindingState,
@@ -212,7 +213,7 @@ const agreedOutcomes = (
     (outcome): outcome is ArgumentOutcome & { path: readonly string[] } =>
       outcome.path !== undefined,
   );
-  return new Set(proven.map(({ path }) => path.join("\0"))).size === 1
+  return new Set(proven.map(({ path }) => compositeKey(path))).size === 1
     ? proven
     : [];
 };

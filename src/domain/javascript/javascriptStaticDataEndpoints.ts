@@ -11,6 +11,7 @@ import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.j
 import { staticConstantString } from "./javascriptStaticConstants.js";
 import { classifyJavaScriptUrlValue } from "./javascriptUrlValues.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 
 /**
  * Record URL, host, and path values present in string data: literals,
@@ -103,7 +104,7 @@ const addDataEndpoint = (
   if (classifyJavaScriptUrlValue(input.value) === undefined) return;
   addLocatedFinding(context, {
     collection: context.accumulator.endpoints,
-    key: `endpoint\0data\0${input.value}`,
+    key: compositeKey(["endpoint", "data", input.value]),
     node: input.node,
     value: {
       kind: "data",

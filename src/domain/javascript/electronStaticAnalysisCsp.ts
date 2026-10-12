@@ -6,6 +6,7 @@ import {
 } from "./contentSecurityPolicy.js";
 import type { ElectronContentSecurityPolicyFinding } from "./electronStaticAnalysisTypes.js";
 import { boundedExpression } from "./electronStaticAnalysisValues.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import { argumentNode, range } from "./javascriptStaticAnalysisHelpers.js";
@@ -140,7 +141,11 @@ const addPolicy = (
   };
   addLocatedFinding(context, {
     collection: context.accumulator.contentSecurityPolicies,
-    key: `content-security-policy\0${input.mechanism}\0${finding.policy ?? finding.policy_expression ?? ""}`,
+    key: compositeKey([
+      "content-security-policy",
+      input.mechanism,
+      finding.policy ?? finding.policy_expression ?? "",
+    ]),
     node,
     value: finding,
   });
