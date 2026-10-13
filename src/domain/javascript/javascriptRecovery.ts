@@ -22,7 +22,7 @@ export const javascriptRecoveryInputSchema = z.strictObject({
     .enum(["wakaru", "jsbeautify"])
     .default("wakaru")
     .describe(
-      "Caller-supplied engine: Wakaru module unpacking, or jsbeautify (js-beautify-rs) per-file deobfuscation",
+      "Caller-supplied engine: Wakaru module unpacking, or jsbeautify per-file deobfuscation",
     ),
   extraction_mode: z
     .enum(["structural", "heuristic", "inspection"])

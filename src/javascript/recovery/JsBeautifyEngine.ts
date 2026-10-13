@@ -31,7 +31,7 @@ import {
 
 const OPERATION = "recover_javascript_sources";
 const REQUIREMENT =
-  "Provide an absolute REA_JSBEAUTIFY_COMMAND pointing to a jsbeautify (js-beautify-rs) binary on Linux; no tool is installed by REA. See docs/javascript-recovery.md#jsbeautify.";
+  "Provide an absolute REA_JSBEAUTIFY_COMMAND pointing to a jsbeautify binary on Linux; no tool is installed by REA. See docs/javascript-recovery.md#jsbeautify.";
 const REPARSE_PHASES = ["19.6", "21.5"] as const;
 const LEVEL_ARGUMENTS = {
   minimal: [],
@@ -352,7 +352,7 @@ const prepareJsBeautifyExecution = async (context: RecoveryWorkspace) => {
   );
 };
 
-/** jsbeautify (js-beautify-rs): per-file formatting or deobfuscation behind a re-parse gate. */
+/** jsbeautify: per-file formatting or deobfuscation behind a re-parse gate. */
 export const jsbeautifyEngine: RecoveryEngine = {
   id: "jsbeautify",
   limits: JSBEAUTIFY_LIMITS,

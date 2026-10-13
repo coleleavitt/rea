@@ -50,7 +50,7 @@ Both give the same binary (SHA-256
 ### jsbeautify
 
 `engine: "jsbeautify"` (CLI `--engine jsbeautify`) uses a caller-supplied
-[jsbeautify](https://github.com/coleleavitt/js-beautify-rs) binary on Linux
+[jsbeautify](https://github.com/coleleavitt/jsbeautify) binary on Linux
 (any architecture). Set `REA_JSBEAUTIFY_COMMAND` to its absolute path; util-linux
 `prlimit` is required as for Wakaru. REA neither installs nor pins it: the
 result reports the executable's path, SHA-256 and `jsbeautify --version` banner,
@@ -74,7 +74,7 @@ output re-parse checks (phases 19.6 and 21.5); otherwise the file is listed in
 proves syntax, not behaviour. `reports/phases.log` keeps the phase summary per
 file and `reports/provenance.json` the exact arguments and gate verdicts.
 
-Builds of jsbeautify before js-beautify-rs `8778d5b` reserve a worker stack of
+Builds of jsbeautify before `8778d5b` reserve a worker stack of
 2 KiB per input byte regardless of address-space limits (a 2.4 MB esbuild
 bundle peaks at 0.33 GB RSS but aborts below 3 GiB); later builds cap the stack
 at a quarter of the limit. This engine runs under an 8 GiB address-space

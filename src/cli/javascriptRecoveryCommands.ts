@@ -36,9 +36,7 @@ export const registerJavaScriptRecoveryCommands = (
       engine: z
         .enum(["wakaru", "jsbeautify"])
         .optional()
-        .describe(
-          "Caller-supplied engine: wakaru (default) or jsbeautify (js-beautify-rs)",
-        ),
+        .describe("Caller-supplied engine: wakaru (default) or jsbeautify"),
       extractionMode: z
         .enum(["structural", "heuristic", "inspection"])
         .optional()

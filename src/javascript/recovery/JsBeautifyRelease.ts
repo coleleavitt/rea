@@ -8,10 +8,10 @@ export const JSBEAUTIFY_PROVIDER_IDENTITY = {
 } as const;
 
 export const JSBEAUTIFY_REPOSITORY =
-  "https://github.com/coleleavitt/js-beautify-rs";
+  "https://github.com/coleleavitt/jsbeautify";
 
 /**
- * Per-operation bounds. Builds before js-beautify-rs 8778d5b reserve a worker
+ * Per-operation bounds. jsbeautify builds before 8778d5b reserve a worker
  * stack of 2 KiB per input byte regardless of the address-space limit: a
  * 2.4 MB esbuild bundle peaks at 0.33 GB RSS yet aborts below 3 GiB, so the
  * ceiling is 8 GiB. Later builds cap the stack at a quarter of the limit. Deobfuscation logs one line
