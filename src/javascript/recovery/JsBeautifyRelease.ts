@@ -11,7 +11,7 @@ export const JSBEAUTIFY_REPOSITORY =
   "https://github.com/coleleavitt/jsbeautify";
 
 /**
- * Per-operation bounds. jsbeautify builds before b99e8b1 reserve a worker
+ * Per-operation bounds. jsbeautify builds before 9949993 reserve a worker
  * stack of 2 KiB per input byte regardless of the address-space limit: a
  * 2.4 MB esbuild bundle peaks at 0.33 GB RSS yet aborts below 3 GiB, so the
  * ceiling is 8 GiB. Later builds cap the stack at a quarter of the limit. Deobfuscation logs one line
